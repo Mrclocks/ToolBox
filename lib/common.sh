@@ -4,7 +4,7 @@
 
 set -o pipefail
 
-SECUREBOX_VERSION="1.0.0"
+SECUREBOX_VERSION="0.1.0-beta"
 SECUREBOX_NAME="SecureBox"
 SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"

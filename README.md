@@ -3,9 +3,13 @@
 # جعبه‌ابزار ایمن‌سازی و بهینه‌سازی سرور برای استفاده به‌عنوان endpoint انواع VPN
 # (WireGuard، OpenVPN، Xray و مشابه) روی Ubuntu و Debian.
 
+![Version](https://img.shields.io/badge/version-0.1.0--beta-orange.svg)
+![Status](https://img.shields.io/badge/status-beta-yellow.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Ubuntu%2022–26%20%7C%20Debian%2012–13-brightgreen.svg)
 ![Shell](https://img.shields.io/badge/shell-bash-informational.svg)
+
+> **نسخه فعلی: `0.1.0-beta`** — اولین انتشار آزمایشی. برای سرورهای production با احتیاط و بعد از تست روی یک VPS آزمایشی استفاده کنید.
 
 ---
 
@@ -41,7 +45,14 @@
 
 ## نصب و اجرا (تک‌خطی)
 
-از داخل سرور (با دسترسی root):
+از داخل سرور (با دسترسی root) — **نسخه 0.1.0-beta**:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh -o install.sh
+sudo bash install.sh
+```
+
+یا از شاخه اصلی بعد از merge:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/main/install.sh -o install.sh
@@ -51,7 +62,7 @@ sudo bash install.sh
 یا کل مخزن:
 
 ```bash
-git clone https://github.com/Mrclocks/ToolBox.git
+git clone --branch v0.1.0-beta https://github.com/Mrclocks/ToolBox.git
 cd ToolBox
 sudo bash install.sh
 ```
