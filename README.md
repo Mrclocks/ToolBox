@@ -45,10 +45,10 @@
 
 ## نصب و اجرا (تک‌خطی)
 
-فقط **یک خط** — دانلود + نصب ماژول‌ها + اجرای منو:
+همیشه **آخرین ریلیز** — لینک ثابت است و لازم نیست هر بار عوض شود:
 
 ```bash
-curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash
+curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash
 ```
 
 بعد از اولین اجرا، روی سرور نصب محلی می‌ماند. برای بارهای بعد حتی بدون اینترنت:
@@ -57,14 +57,18 @@ curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/ins
 sudo mrclock
 ```
 
-یا همان one-liner دوباره (اگر GitHub در دسترس باشد).
+با فلگ:
+
+```bash
+curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash -s -- --one-click
+```
 
 ### روش‌های جایگزین
 
-کلون مخزن:
+کلون آخرین تگ ریلیز:
 
 ```bash
-git clone --branch v0.1.0-beta https://github.com/Mrclocks/ToolBox.git
+git clone --branch "$(curl -fsSL https://api.github.com/repos/Mrclocks/ToolBox/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)" https://github.com/Mrclocks/ToolBox.git
 cd ToolBox
 sudo bash install.sh
 ```

@@ -3,15 +3,16 @@
 # MrClock ToolBox — VPN Hardening & Optimization
 # Ubuntu 22–26 · Debian 12–13
 # =============================================================================
-# One-liner:
-#   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash
+# One-liner (always latest release — no version pin needed):
+#   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash
 # After first install, re-run anytime without network:
 #   sudo mrclock
 # =============================================================================
 set -o pipefail
 
 SECUREBOX_REPO="${SECUREBOX_REPO:-Mrclocks/ToolBox}"
-SECUREBOX_REF="${SECUREBOX_REF:-v0.1.0-beta}"
+# "latest" resolves to the newest GitHub Release tag automatically
+SECUREBOX_REF="${SECUREBOX_REF:-latest}"
 SECUREBOX_INSTALL_DIR="${SECUREBOX_INSTALL_DIR:-/opt/mrclock-toolbox}"
 SECUREBOX_BIN_LINK="${SECUREBOX_BIN_LINK:-/usr/local/bin/mrclock}"
 
@@ -19,6 +20,34 @@ SECUREBOX_BIN_LINK="${SECUREBOX_BIN_LINK:-/usr/local/bin/mrclock}"
 _securebox_have_tree() {
   local root="$1"
   [[ -f "${root}/lib/common.sh" && -f "${root}/lib/runner.sh" && -d "${root}/modules" && -d "${root}/data" ]]
+}
+
+_securebox_resolve_ref() {
+  local ref="${1:-${SECUREBOX_REF:-latest}}"
+  if [[ "$ref" != "latest" ]]; then
+    printf '%s\n' "$ref"
+    return 0
+  fi
+
+  local api tag
+  api="https://api.github.com/repos/${SECUREBOX_REPO}/releases/latest"
+  tag="$(curl -fsSL --connect-timeout 15 "$api" 2>/dev/null \
+    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | head -n1)"
+
+  # Fallback: newest release including pre-releases
+  if [[ -z "$tag" || "$tag" == "null" ]]; then
+    api="https://api.github.com/repos/${SECUREBOX_REPO}/releases?per_page=5"
+    tag="$(curl -fsSL --connect-timeout 15 "$api" 2>/dev/null \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      | head -n1)"
+  fi
+
+  if [[ -z "$tag" || "$tag" == "null" ]]; then
+    echo "[MrClock] ERROR: could not resolve latest release tag." >&2
+    return 1
+  fi
+  printf '%s\n' "$tag"
 }
 
 _securebox_install_persistent() {
@@ -43,12 +72,16 @@ EOF
 }
 
 _securebox_fetch_tree() {
-  local tmp archive url
+  local tmp archive url resolved
+  resolved="$(_securebox_resolve_ref "${SECUREBOX_REF}")" || exit 1
+  SECUREBOX_REF="$resolved"
+  export SECUREBOX_REF
+
   tmp="$(mktemp -d /tmp/securebox-fetch.XXXXXX)"
   archive="${tmp}/securebox.tgz"
 
   url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
-  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
+  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} (latest) ..." >&2
   if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive"; then
     url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
     curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
