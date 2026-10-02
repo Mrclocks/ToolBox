@@ -81,13 +81,9 @@ _securebox_bootstrap() {
   export SECUREBOX_ROOT="$extracted"
 
   echo "[SecureBox] Starting from ${extracted}" >&2
-  # Re-attach to the real TTY so interactive menus work after curl|bash.
-  # Some environments report /dev/tty as readable but cannot open it.
-  if ( : </dev/tty ) 2>/dev/null; then
-    exec bash "${extracted}/install.sh" "$@" </dev/tty
-  else
-    exec bash "${extracted}/install.sh" "$@"
-  fi
+  # Re-exec the full tree. Interactive prompts use /dev/tty via ui_read
+  # so curl|bash still works on a real server TTY.
+  exec bash "${extracted}/install.sh" "$@"
 }
 
 _securebox_bootstrap "$@"
