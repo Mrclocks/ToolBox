@@ -51,14 +51,13 @@
 curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash
 ```
 
-با فلگ (مثلاً One-Click):
+بعد از اولین اجرا، روی سرور نصب محلی می‌ماند. برای بارهای بعد حتی بدون اینترنت:
 
 ```bash
-curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
-curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash -s -- --one-click --dns cloudflare --mtu 1400 --ssh-port 22442
+sudo mrclock
 ```
 
-اسکریپت اگر کامل نباشد، خودش آرشیو `v0.1.0-beta` را از GitHub می‌گیرد و اجرا را ادامه می‌دهد.
+یا همان one-liner دوباره (اگر GitHub در دسترس باشد).
 
 ### روش‌های جایگزین
 

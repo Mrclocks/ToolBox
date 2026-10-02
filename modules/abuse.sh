@@ -68,8 +68,9 @@ _abuse_apply_nft() {
     || nft add chain inet securebox output '{ type filter hook output priority -10; policy accept; }'
   nft flush chain inet securebox input 2>/dev/null || true
   nft flush chain inet securebox output 2>/dev/null || true
+  # Inbound only — outbound drops break GitHub/apt/CDN and prevent re-running the toolbox
   nft add rule inet securebox input ip saddr @abuse4 drop
-  nft add rule inet securebox output ip daddr @abuse4 drop
+  # Keep an empty output chain for compatibility with older installs; no drop rules
 
   # Persist
   mkdir -p /etc/nftables.d
@@ -90,12 +91,11 @@ _abuse_apply_iptables() {
   iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
   iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
   iptables -I INPUT 1 -j SECUREBOX_ABUSE
-  iptables -I OUTPUT 1 -j SECUREBOX_ABUSE
+  # Do NOT hook OUTPUT — outbound cloud CIDR drops break package repos / GitHub
 
   local c
   for c in "${cidrs[@]}"; do
     iptables -A SECUREBOX_ABUSE -s "$c" -j DROP 2>/dev/null || true
-    iptables -A SECUREBOX_ABUSE -d "$c" -j DROP 2>/dev/null || true
   done
 
   if have_cmd netfilter-persistent; then
@@ -124,8 +124,26 @@ _abuse_harden_services() {
   fi
 }
 
+# Remove outbound abuse drops left by older toolbox versions (they break GitHub/apt)
+_abuse_repair_outbound() {
+  if have_cmd nft; then
+    nft flush chain inet securebox output 2>/dev/null || true
+    if [[ -f /etc/nftables.d/securebox-abuse.nft ]]; then
+      nft list table inet securebox > /etc/nftables.d/securebox-abuse.nft 2>/dev/null || true
+    fi
+  fi
+  if have_cmd iptables; then
+    iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
+    # Drop any -d DROP rules inside chain (rebuild leaves inbound-only via module apply)
+    while iptables -D SECUREBOX_ABUSE -d 0.0.0.0/0 -j DROP 2>/dev/null; do :; done
+  fi
+}
+
 module_abuse() {
   ui_step "Abuse IP range blocking + anti-abuse posture"
+
+  # Heal previous builds that blocked outbound (broke GitHub / apt / re-run)
+  _abuse_repair_outbound
 
   if ! is_true "${SECUREBOX_ANSWERS[block_abuse]:-yes}"; then
     module_skip "abuse" "user declined abuse range blocking"
