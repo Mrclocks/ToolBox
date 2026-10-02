@@ -3,13 +3,13 @@
 # جعبه‌ابزار ایمن‌سازی و بهینه‌سازی سرور برای استفاده به‌عنوان endpoint انواع VPN
 # (WireGuard، OpenVPN، Xray و مشابه) روی Ubuntu و Debian.
 
-![Version](https://img.shields.io/badge/version-0.1.2-orange.svg)
+![Version](https://img.shields.io/badge/version-0.1.3-orange.svg)
 ![Status](https://img.shields.io/badge/status-release-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Ubuntu%2022–26%20%7C%20Debian%2012–13-brightgreen.svg)
 ![Shell](https://img.shields.io/badge/shell-bash-informational.svg)
 
-> **نسخه فعلی: `0.1.2`** — جواب‌های کاربر دقیق رعایت می‌شود؛ لینک نصب ثابت با `releases/latest`.
+> **نسخه فعلی: `0.1.3`** — جواب‌های کاربر دقیق رعایت می‌شود؛ لینک نصب ثابت با `releases/latest`.
 
 ---
 

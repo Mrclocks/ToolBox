@@ -4,7 +4,7 @@
 
 set -o pipefail
 
-SECUREBOX_VERSION="0.1.2"
+SECUREBOX_VERSION="0.1.3"
 SECUREBOX_NAME="MrClock"
 SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
