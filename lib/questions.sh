@@ -26,53 +26,50 @@ questionnaire_common_safety() {
   :
 }
 
-questionnaire_all() {
-  SECUREBOX_ANSWERS[continue_on_error]=yes
-  ui_step "Questions first — then SecureBox will apply everything"
-  ask_dns
-  ask_mtu
-  ask_ssh
-  ask_ipv6
-  ask_abuse
-  ask_ufw
-  ask_fail2ban_params
-  ask_unattended
-  ask_services
-  review_answers
-  if ! ui_confirm "Proceed with Apply All using these answers?" "Y"; then
-    ui_warn "Cancelled by user."
-    return 1
-  fi
-  return 0
-}
-
 ask_dns() {
   local labels=()
   local line
   while IFS= read -r line; do
-    labels+=("$line")
+    [[ -n "$line" ]] && labels+=("$line")
   done < <(dns_preset_labels)
 
   local choice
   ui_menu choice "Choose DNS resolver" "${labels[@]}"
   SECUREBOX_ANSWERS[dns_choice]="$choice"
-  local id
-  IFS='|' read -r id _ _ _ <<<"${DNS_PRESETS[$((choice - 1))]}"
-  if [[ "$id" == "custom" ]]; then
-    local p s
-    while true; do
-      ui_ask p "Primary DNS (IPv4)"
-      is_ipv4 "$p" && break
-      ui_warn "Enter a valid IPv4 address."
-    done
-    ui_ask s "Secondary DNS (optional IPv4)" ""
-    if [[ -n "$s" ]] && ! is_ipv4 "$s"; then
-      ui_warn "Ignoring invalid secondary DNS."
-      s=""
-    fi
-    SECUREBOX_ANSWERS[dns_primary]="$p"
-    SECUREBOX_ANSWERS[dns_secondary]="$s"
-  fi
+
+  local id label primary secondary
+  IFS='|' read -r id label primary secondary <<<"${DNS_PRESETS[$((choice - 1))]}"
+  SECUREBOX_ANSWERS[dns_id]="$id"
+
+  case "$id" in
+    custom)
+      local p s
+      while true; do
+        ui_ask p "Primary DNS (IPv4)"
+        is_ipv4 "$p" && break
+        ui_warn "Enter a valid IPv4 address."
+      done
+      ui_ask s "Secondary DNS (optional IPv4)" ""
+      if [[ -n "$s" ]] && ! is_ipv4 "$s"; then
+        ui_warn "Ignoring invalid secondary DNS."
+        s=""
+      fi
+      SECUREBOX_ANSWERS[dns_primary]="$p"
+      SECUREBOX_ANSWERS[dns_secondary]="$s"
+      ui_info "Custom DNS: ${p}${s:+ / $s}"
+      ;;
+    keep)
+      SECUREBOX_ANSWERS[dns_primary]="${DNS_CURRENT[0]:-}"
+      SECUREBOX_ANSWERS[dns_secondary]="${DNS_CURRENT[1]:-}"
+      ui_info "Keeping current DNS: ${DNS_CURRENT[*]:-(none)}"
+      ;;
+    *)
+      # Preset selected — fill automatically, never ask again
+      SECUREBOX_ANSWERS[dns_primary]="$primary"
+      SECUREBOX_ANSWERS[dns_secondary]="$secondary"
+      ui_success "DNS auto-selected: ${primary} / ${secondary}"
+      ;;
+  esac
 }
 
 ask_mtu() {
@@ -228,7 +225,11 @@ ask_fail2ban_params() {
 
 review_answers() {
   ui_box_start "Review your choices"
-  ui_kv "DNS choice #" "${SECUREBOX_ANSWERS[dns_choice]:-}"
+  local dns_show="${SECUREBOX_ANSWERS[dns_id]:-#${SECUREBOX_ANSWERS[dns_choice]:-}}"
+  if [[ -n "${SECUREBOX_ANSWERS[dns_primary]:-}" ]]; then
+    dns_show="${dns_show} (${SECUREBOX_ANSWERS[dns_primary]}${SECUREBOX_ANSWERS[dns_secondary]:+ / ${SECUREBOX_ANSWERS[dns_secondary]}})"
+  fi
+  ui_kv "DNS" "$dns_show"
   ui_kv "MTU" "${SECUREBOX_ANSWERS[mtu]:-}"
   ui_kv "SSH port" "${SECUREBOX_ANSWERS[ssh_current_port]:-?} → ${SECUREBOX_ANSWERS[ssh_port]:-?}"
   ui_kv "SSH password" "${SECUREBOX_ANSWERS[ssh_password_auth]:-}"
@@ -244,8 +245,9 @@ review_answers() {
 }
 
 questionnaire_all() {
-  questionnaire_common_safety
-  ui_step "Questions first — then SecureBox will apply everything"
+  SECUREBOX_ANSWERS[continue_on_error]=yes
+  ui_clear
+  ui_step "Questions first — then everything will be applied"
   ask_dns
   ask_mtu
   ask_ssh

@@ -5,7 +5,7 @@
 set -o pipefail
 
 SECUREBOX_VERSION="0.1.0-beta"
-SECUREBOX_NAME="SecureBox"
+SECUREBOX_NAME="MrClock"
 SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
 SECUREBOX_BACKUP_ROOT="${SECUREBOX_BACKUP_ROOT:-/var/backups/securebox}"

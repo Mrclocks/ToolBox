@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# SecureBox — terminal UI
+# MrClock / SecureBox — terminal UI
 # shellcheck shell=bash
 
-# Colors (safe when not a TTY)
+# Colors (safe when not a TTY) — orange theme
 if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]]; then
   C_RESET=$'\033[0m'
   C_BOLD=$'\033[1m'
@@ -10,18 +10,27 @@ if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]]; then
   C_RED=$'\033[38;2;255;95;109m'
   C_GREEN=$'\033[38;2;80;250;123m'
   C_YELLOW=$'\033[38;2;255;184;108m'
-  C_BLUE=$'\033[38;2;94;196;255m'
-  C_CYAN=$'\033[38;2;139;233;253m'
-  C_MAGENTA=$'\033[38;2;188;154;255m'
+  # Brand orange (replaces blue/cyan accents)
+  C_ORANGE=$'\033[38;2;255;140;0m'
+  C_BLUE=$'\033[38;2;255;140;0m'
+  C_CYAN=$'\033[38;2;255;140;0m'
+  C_MAGENTA=$'\033[38;2;255;160;40m'
   C_WHITE=$'\033[38;2;248;248;242m'
   C_GRAY=$'\033[38;2;120;130;150m'
 else
   C_RESET=""; C_BOLD=""; C_DIM=""; C_RED=""; C_GREEN=""; C_YELLOW=""
-  C_BLUE=""; C_CYAN=""; C_MAGENTA=""; C_WHITE=""; C_GRAY=""
+  C_ORANGE=""; C_BLUE=""; C_CYAN=""; C_MAGENTA=""; C_WHITE=""; C_GRAY=""
 fi
 
 ui_clear() {
-  [[ -t 1 ]] && clear || true
+  # Hard clear scrollback + screen so only the next draw remains
+  if [[ -t 1 ]]; then
+    printf '\033[3J\033[2J\033[H' 2>/dev/null || true
+    clear 2>/dev/null || true
+  fi
+  if [[ -w /dev/tty ]]; then
+    printf '\033[3J\033[2J\033[H' >/dev/tty 2>/dev/null || true
+  fi
 }
 
 ui_line() {
@@ -35,13 +44,13 @@ ui_line() {
 ui_banner() {
   ui_clear
   cat <<EOF
-${C_CYAN}${C_BOLD}
-   ███████╗███████╗ ██████╗██╗   ██╗██████╗ ███████╗██████╗  ██████╗ ██╗  ██╗
-   ██╔════╝██╔════╝██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗██╔═══██╗╚██╗██╔╝
-   ███████╗█████╗  ██║     ██║   ██║██████╔╝█████╗  ██████╔╝██║   ██║ ╚███╔╝
-   ╚════██║██╔══╝  ██║     ██║   ██║██╔══██╗██╔══╝  ██╔══██╗██║   ██║ ██╔██╗
-   ███████║███████╗╚██████╗╚██████╔╝██║  ██║███████╗██████╔╝╚██████╔╝██╔╝ ██╗
-   ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝
+${C_ORANGE}${C_BOLD}
+   ███╗   ███╗██████╗  ██████╗██╗      ██████╗  ██████╗██╗  ██╗
+   ████╗ ████║██╔══██╗██╔════╝██║     ██╔═══██╗██╔════╝██║ ██╔╝
+   ██╔████╔██║██████╔╝██║     ██║     ██║   ██║██║     █████╔╝
+   ██║╚██╔╝██║██╔══██╗██║     ██║     ██║   ██║██║     ██╔═██╗
+   ██║ ╚═╝ ██║██║  ██║╚██████╗███████╗╚██████╔╝╚██████╗██║  ██╗
+   ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
 ${C_RESET}${C_DIM}   VPN Hardening & Optimization Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
 EOF
   ui_line 72
@@ -55,11 +64,11 @@ EOF
   fi
 }
 
-ui_info()    { printf '%sℹ%s  %s\n' "$C_BLUE" "$C_RESET" "$*"; log INFO "$*"; }
+ui_info()    { printf '%sℹ%s  %s\n' "$C_ORANGE" "$C_RESET" "$*"; log INFO "$*"; }
 ui_success() { printf '%s✔%s  %s\n' "$C_GREEN" "$C_RESET" "$*"; log INFO "$*"; }
 ui_warn()    { printf '%s⚠%s  %s\n' "$C_YELLOW" "$C_RESET" "$*"; log WARN "$*"; }
 ui_error()   { printf '%s✖%s  %s\n' "$C_RED" "$C_RESET" "$*"; log ERROR "$*"; }
-ui_step()    { printf '\n%s▸ %s%s\n' "$C_MAGENTA$C_BOLD" "$*" "$C_RESET"; log INFO "STEP: $*"; }
+ui_step()    { printf '\n%s▸ %s%s\n' "$C_ORANGE$C_BOLD" "$*" "$C_RESET"; log INFO "STEP: $*"; }
 
 ui_kv() {
   printf '   %s%-22s%s %s\n' "$C_GRAY" "$1" "$C_RESET" "$2"
@@ -94,7 +103,7 @@ ui_confirm() {
   local hint ans
   if [[ "${default^^}" == "Y" ]]; then hint="Y/n"; else hint="y/N"; fi
   while true; do
-    printf '%s?%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$prompt" "$hint"
+    printf '%s?%s %s [%s]: ' "$C_ORANGE" "$C_RESET" "$prompt" "$hint"
     ui_read ans
     ans="$(trim "${ans:-}")"
     if [[ -z "$ans" ]]; then
@@ -115,9 +124,9 @@ ui_ask() {
   local __default="${3-}"
   local __ans
   if [[ -n "$__default" ]]; then
-    printf '%s?%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$__prompt" "$__default"
+    printf '%s?%s %s [%s]: ' "$C_ORANGE" "$C_RESET" "$__prompt" "$__default"
   else
-    printf '%s?%s %s: ' "$C_CYAN" "$C_RESET" "$__prompt"
+    printf '%s?%s %s: ' "$C_ORANGE" "$C_RESET" "$__prompt"
   fi
   ui_read __ans
   __ans="$(trim "${__ans:-}")"
@@ -165,14 +174,14 @@ ui_menu() {
   local -a __items=("$@")
   local i choice
   echo
-  printf '%s%s%s\n' "$C_BOLD" "$__title" "$C_RESET"
+  printf '%s%s%s\n' "$C_BOLD$C_ORANGE" "$__title" "$C_RESET"
   ui_line 56
   for i in "${!__items[@]}"; do
-    printf '  %s%2d)%s %s\n' "$C_CYAN" "$((i + 1))" "$C_RESET" "${__items[$i]}"
+    printf '  %s%2d)%s %s\n' "$C_ORANGE" "$((i + 1))" "$C_RESET" "${__items[$i]}"
   done
   ui_line 56
   while true; do
-    printf '%sSelect%s [1-%d]: ' "$C_CYAN" "$C_RESET" "${#__items[@]}"
+    printf '%sSelect%s [1-%d]: ' "$C_ORANGE" "$C_RESET" "${#__items[@]}"
     ui_read choice
     choice="$(trim "$choice")"
     if is_uint "$choice" && (( choice >= 1 && choice <= ${#__items[@]} )); then
@@ -195,7 +204,7 @@ ui_progress() {
   local bar
   bar="$(printf '%*s' "$filled" '' | tr ' ' '█')"
   bar+="$(printf '%*s' "$((width - filled))" '' | tr ' ' '░')"
-  printf '\r   %s[%s]%s %s/%s  %s' "$C_BLUE" "$bar" "$C_RESET" "$current" "$total" "$label"
+  printf '\r   %s[%s]%s %s/%s  %s' "$C_ORANGE" "$bar" "$C_RESET" "$current" "$total" "$label"
   [[ "$current" -eq "$total" ]] && printf '\n' || true
 }
 
