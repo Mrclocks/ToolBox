@@ -4,9 +4,9 @@
 # Ubuntu 22–26 · Debian 12–13
 # =============================================================================
 # One-liner (install + run):
-#   curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash
+#   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash
 # With flags:
-#   curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
+#   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
 # =============================================================================
 set -o pipefail
 
