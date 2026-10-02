@@ -112,29 +112,18 @@ _securebox_fetch_tree() {
 _securebox_bootstrap() {
   local candidate=""
 
-  # 1) Running from a full checkout / persistent install
+  # 1) Running from a full tree next to this script (git clone OR /opt/mrclock OR extracted)
   if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if _securebox_have_tree "$candidate"; then
       SECUREBOX_ROOT="$candidate"
-      # Keep persistent copy fresh when running from a newer tree
+      # If this is the persistent install invoked via `mrclock`, use it as-is.
+      # If it's a newer checkout, refresh /opt.
       if [[ "$candidate" != "$SECUREBOX_INSTALL_DIR" ]]; then
         _securebox_install_persistent "$candidate" 2>/dev/null || true
       fi
       return 0
     fi
-  fi
-
-  # 2) Prefer previously installed local copy (works even if GitHub is unreachable)
-  if _securebox_have_tree "$SECUREBOX_INSTALL_DIR"; then
-    SECUREBOX_ROOT="$SECUREBOX_INSTALL_DIR"
-    if [[ "${SECUREBOX_BOOTSTRAPPED:-0}" != "1" ]]; then
-      export SECUREBOX_BOOTSTRAPPED=1
-      export SECUREBOX_ROOT
-      echo "[MrClock] Using local install: ${SECUREBOX_INSTALL_DIR}" >&2
-      exec bash "${SECUREBOX_INSTALL_DIR}/install.sh" "$@"
-    fi
-    return 0
   fi
 
   if [[ -n "${SECUREBOX_ROOT:-}" ]] && _securebox_have_tree "$SECUREBOX_ROOT"; then
@@ -146,7 +135,8 @@ _securebox_bootstrap() {
     exit 1
   fi
 
-  # 3) First-time / one-liner: fetch release, install persistently, re-exec
+  # 2) One-liner / bare install.sh: ALWAYS fetch latest and refresh /opt
+  #    (do not reuse a stale /opt copy — that caused old DNS bugs to stick around)
   local extracted
   extracted="$(_securebox_fetch_tree)"
   _securebox_install_persistent "$extracted" || true
