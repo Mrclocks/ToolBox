@@ -1,0 +1,141 @@
+# SecureBox curated abuse / scanner CIDR blocklist
+# Purpose: reduce inbound abuse probes and common scanner sources that often
+# contribute to noisy traffic and Hetzner abuse investigations.
+# Format: one IPv4 CIDR per line. Lines starting with # are comments.
+# Update carefully — overly broad ranges can break legitimate clients.
+
+# --- Known mass-scanner / research-scanner clouds (commonly noisy) ---
+# Shadowserver / similar research noise often originates from various clouds;
+# we keep this list conservative and focused on frequently abusive probes.
+
+# Tor exit aggregates are intentionally NOT fully blocked here (can break users).
+
+# --- High-noise cloud probe ranges commonly seen in abuse logs ---
+# DigitalOcean popular scanner slices (subset)
+104.131.0.0/16
+104.236.0.0/16
+159.65.0.0/16
+167.99.0.0/16
+178.62.0.0/16
+188.166.0.0/16
+198.199.64.0/18
+206.189.0.0/16
+
+# Linode / Akamai popular probe slices (subset)
+45.33.0.0/16
+45.56.0.0/16
+45.79.0.0/16
+66.175.208.0/20
+96.126.96.0/19
+139.162.0.0/16
+172.104.0.0/15
+173.255.192.0/18
+
+# OVH noisy slices (subset)
+5.39.0.0/16
+5.135.0.0/16
+37.59.0.0/16
+51.38.0.0/16
+51.68.0.0/16
+51.75.0.0/16
+51.83.0.0/16
+54.36.0.0/16
+54.37.0.0/16
+91.121.0.0/16
+94.23.0.0/16
+137.74.0.0/16
+149.202.0.0/16
+151.80.0.0/16
+164.132.0.0/16
+176.31.0.0/16
+178.32.0.0/15
+188.165.0.0/16
+213.186.33.0/24
+
+# Contabo noisy slices (subset)
+5.189.128.0/17
+79.143.176.0/20
+144.91.64.0/18
+161.97.0.0/16
+167.86.64.0/18
+173.249.0.0/19
+173.212.192.0/18
+178.238.224.0/19
+193.34.144.0/20
+194.233.64.0/18
+207.180.192.0/18
+
+# Choopa / Vultr noisy slices (subset)
+45.32.0.0/16
+45.63.0.0/16
+45.76.0.0/16
+45.77.0.0/16
+63.209.32.0/19
+64.176.0.0/16
+66.55.128.0/19
+108.61.0.0/16
+136.244.0.0/16
+140.82.0.0/16
+149.28.0.0/16
+155.138.0.0/16
+207.148.0.0/16
+209.250.224.0/19
+217.69.0.0/16
+
+# Amazon AWS broad slices often used by scanners (subset — may affect AWS clients)
+# Keep narrower: only a few historically noisy for SSH brute
+3.8.0.0/16
+3.9.0.0/16
+18.130.0.0/16
+34.240.0.0/13
+52.56.0.0/16
+54.228.0.0/16
+
+# Google Cloud noisy SSH scanners (subset)
+34.66.0.0/16
+34.67.0.0/16
+34.68.0.0/16
+35.184.0.0/13
+35.192.0.0/14
+35.196.0.0/15
+35.198.0.0/16
+35.199.0.0/17
+35.200.0.0/14
+35.204.0.0/15
+35.206.0.0/15
+35.208.0.0/12
+35.224.0.0/12
+35.240.0.0/13
+
+# Microsoft Azure noisy slices (subset)
+13.64.0.0/11
+20.36.0.0/14
+20.40.0.0/13
+20.48.0.0/12
+20.64.0.0/10
+40.64.0.0/10
+52.224.0.0/11
+
+# Known hostile / bulletproof hosting aggregates (community curated subsets)
+5.188.0.0/16
+31.184.192.0/18
+37.49.224.0/19
+46.161.0.0/17
+78.128.0.0/17
+85.208.0.0/16
+91.200.12.0/22
+91.215.0.0/16
+95.215.0.0/17
+103.27.0.0/16
+103.75.0.0/16
+111.90.0.0/16
+185.156.0.0/16
+185.220.100.0/22
+185.234.0.0/16
+193.201.224.0/19
+194.26.0.0/16
+195.123.0.0/16
+212.192.0.0/16
+
+# Overly broad continent/country /8 blocks are intentionally omitted.
+# The abuse module also skips any CIDR with prefix length <= 8.
