@@ -1,11 +1,6 @@
 # 🧡 MrClock ToolBox
 
-ایمن‌سازی و بهینه‌سازی سرور VPN روی **Ubuntu 22–26** و **Debian 12–13**
-
-![Version](https://img.shields.io/badge/version-0.1.3-orange.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-
----
+ایمن‌سازی سرور VPN — **Ubuntu 22–26** و **Debian 12–13**
 
 ## 🚀 نصب
 
@@ -13,32 +8,26 @@
 curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash
 ```
 
-اجرای بعدی:
+بعدش فقط:
 
 ```bash
 sudo mrclock
 ```
 
----
-
 ## ✨ قابلیت‌ها
 
-| | |
-|---|---|
-| 🔄 | آپدیت سیستم |
-| 🌐 | DNS + MTU |
-| ⚡ | BBR و تیونینگ شبکه |
-| 🛡️ | UFW + Fail2Ban + SSH |
-| 🚫 | بلاک رنج abuse (اختیاری) |
-| 🔒 | غیرفعال‌سازی IPv6 (اختیاری) |
+- 🔄 آپدیت سیستم
+- 🌐 DNS + MTU
+- ⚡ BBR و تیونینگ شبکه
+- 🛡️ UFW + Fail2Ban + SSH
+- 🚫 بلاک رنج abuse *(اختیاری)*
+- 🔒 خاموش کردن IPv6 *(اختیاری)*
 
-همه چیز با منوی ترمینال و فقط بر اساس جواب خودت اجرا می‌شود.
+همه‌چیز از منو، فقط با جواب خودت.
 
----
+## ⚠️ نکته
 
-## 📌 نکته
-
-بعد از تغییر پورت SSH، اول از ترمینال جدید وصل شو — سشن فعلی را نبند.
+بعد از عوض کردن پورت SSH، اول از ترمینال جدید وصل شو — سشن فعلی را نبند.
 
 ---
 
