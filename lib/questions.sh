@@ -33,17 +33,31 @@ ask_dns() {
     [[ -n "$line" ]] && labels+=("$line")
   done < <(dns_preset_labels)
 
-  local choice
+  if ((${#labels[@]} == 0)); then
+    ui_error "DNS preset list is empty"
+    return 1
+  fi
+
+  local choice=""
   ui_menu choice "Choose DNS resolver" "${labels[@]}"
+  choice="$(trim "$choice")"
+  if ! is_uint "$choice" || (( choice < 1 || choice > ${#DNS_PRESETS[@]} )); then
+    ui_error "Invalid DNS selection: '${choice}'"
+    return 1
+  fi
   SECUREBOX_ANSWERS[dns_choice]="$choice"
 
-  local id label primary secondary
-  IFS='|' read -r id label primary secondary <<<"${DNS_PRESETS[$((choice - 1))]}"
+  local preset id label primary secondary
+  preset="${DNS_PRESETS[$((choice - 1))]}"
+  IFS='|' read -r id label primary secondary <<<"$preset"
+  id="$(trim "$id")"
+  primary="$(trim "$primary")"
+  secondary="$(trim "$secondary")"
   SECUREBOX_ANSWERS[dns_id]="$id"
 
   case "$id" in
     custom)
-      local p s
+      local p="" s=""
       while true; do
         ui_ask p "Primary DNS (IPv4)"
         is_ipv4 "$p" && break
@@ -63,11 +77,21 @@ ask_dns() {
       SECUREBOX_ANSWERS[dns_secondary]="${DNS_CURRENT[1]:-}"
       ui_info "Keeping current DNS: ${DNS_CURRENT[*]:-(none)}"
       ;;
-    *)
-      # Preset selected — fill automatically, never ask again
+    cloudflare|google|quad9|opendns|adguard)
       SECUREBOX_ANSWERS[dns_primary]="$primary"
       SECUREBOX_ANSWERS[dns_secondary]="$secondary"
-      ui_success "DNS auto-selected: ${primary} / ${secondary}"
+      ui_success "Selected ${label}"
+      ui_success "DNS set automatically: ${primary} / ${secondary}"
+      ;;
+    *)
+      if [[ -n "$primary" ]] && is_ipv4 "$primary"; then
+        SECUREBOX_ANSWERS[dns_primary]="$primary"
+        SECUREBOX_ANSWERS[dns_secondary]="$secondary"
+        ui_success "DNS set automatically: ${primary} / ${secondary}"
+      else
+        ui_error "Unknown DNS preset id '${id}' — not applying"
+        return 1
+      fi
       ;;
   esac
 }

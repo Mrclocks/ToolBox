@@ -217,24 +217,25 @@ ui_ask_mtu() {
 
 ui_menu() {
   # ui_menu result_var title item1 item2 ...
+  # IMPORTANT: do not name locals the same as result_var (printf -v would set local only).
   local __var="$1"
   local __title="$2"
   shift 2
   local -a __items=("$@")
-  local i choice
+  local __i __sel
   echo
   printf '%s%s%s\n' "$C_BOLD$C_ORANGE" "$__title" "$C_RESET"
   ui_line 56
-  for i in "${!__items[@]}"; do
-    printf '  %s%2d)%s %s\n' "$C_ORANGE" "$((i + 1))" "$C_RESET" "${__items[$i]}"
+  for __i in "${!__items[@]}"; do
+    printf '  %s%2d)%s %s\n' "$C_ORANGE" "$((__i + 1))" "$C_RESET" "${__items[$__i]}"
   done
   ui_line 56
   while true; do
     printf '%sSelect%s [1-%d]: ' "$C_ORANGE" "$C_RESET" "${#__items[@]}"
-    ui_read choice
-    choice="$(trim "$choice")"
-    if is_uint "$choice" && (( choice >= 1 && choice <= ${#__items[@]} )); then
-      printf -v "$__var" '%s' "$choice"
+    ui_read __sel
+    __sel="$(trim "$__sel")"
+    if is_uint "$__sel" && (( __sel >= 1 && __sel <= ${#__items[@]} )); then
+      printf -v "$__var" '%s' "$__sel"
       return 0
     fi
     ui_warn "Enter a number between 1 and ${#__items[@]}."
