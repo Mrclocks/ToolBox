@@ -32,6 +32,13 @@ source_modules() {
 }
 
 run_pipeline_all() {
+  ui_box_start "Applying only your answers"
+  local k
+  for k in dns_id dns_primary mtu ssh_port block_abuse ufw_enable enable_fail2ban disable_ipv6 unattended disable_unused do_update do_bbr do_ssh; do
+    ui_kv "$k" "${SECUREBOX_ANSWERS[$k]:-(unset)}"
+  done
+  ui_box_end
+
   local -a steps=(
     module_update
     module_timesync
@@ -53,7 +60,6 @@ run_pipeline_all() {
   for step in "${steps[@]}"; do
     ((i++)) || true
     ui_progress "$i" "$total" "$step"
-    # Do not abort whole pipeline on module failure unless confirm returns 1
     if ! "$step"; then
       ui_error "Pipeline stopped at ${step} by user choice or critical failure."
       module_report || true

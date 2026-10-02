@@ -4,6 +4,10 @@
 
 module_timesync() {
   ui_step "Time synchronization"
+  if ! require_answer_yes do_timesync timesync "time sync not explicitly enabled"; then
+    module_skip "timesync" "do_timesync='${SECUREBOX_ANSWERS[do_timesync]:-}'"
+    return 0
+  fi
   if ! apt_install_safe chrony; then
     # fallback
     if systemctl list-unit-files | grep -q systemd-timesyncd; then

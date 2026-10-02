@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Module: disable unused / noisy services (safe list)
+# Module: disable unused services — only when explicitly enabled
 # shellcheck shell=bash
 
 module_services() {
   ui_step "Disable unused services"
 
-  if ! is_true "${SECUREBOX_ANSWERS[disable_unused]:-yes}"; then
-    module_skip "services" "user declined"
+  if ! require_answer_yes disable_unused services "service cleanup not explicitly enabled"; then
+    module_skip "services" "disable_unused='${SECUREBOX_ANSWERS[disable_unused]:-}'"
     return 0
   fi
 
-  # Conservative list — only common desktop/noise services on VPS images
   local -a candidates=(
     avahi-daemon
     cups
@@ -21,8 +20,7 @@ module_services() {
     snapd
   )
 
-  # Do NOT disable snapd on Ubuntu by default if snap is heavily used — ask via answer
-  if ! is_true "${SECUREBOX_ANSWERS[disable_snapd]:-no}"; then
+  if ! answered_yes disable_snapd; then
     candidates=( "${candidates[@]/snapd}" )
   fi
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Module: abuse IP range blocking + basic anti-abuse posture
+# Module: abuse IP range blocking + anti-abuse posture
+# Applies ONLY when SECUREBOX_ANSWERS[block_abuse] is explicitly yes.
 # shellcheck shell=bash
 
 ABUSE_SET_NAME="securebox_abuse"
@@ -13,7 +14,6 @@ _abuse_load_cidrs() {
     /^[[:space:]]*$/ {next}
     {
       cidr=$1
-      # Skip overly broad /8 blocks for safety
       n=split(cidr, a, "/")
       if (n==2 && a[2]+0 <= 8) next
       print cidr
@@ -44,7 +44,6 @@ _abuse_apply_nft() {
   nft list table inet securebox >/dev/null 2>&1 || nft add table inet securebox
   nft list set inet securebox abuse4 >/dev/null 2>&1 \
     || nft add set inet securebox abuse4 '{ type ipv4_addr; flags interval; auto-merge; }'
-  # Flush set then re-add
   nft flush set inet securebox abuse4 2>/dev/null || true
 
   local c chunk=()
@@ -61,18 +60,15 @@ _abuse_apply_nft() {
     nft add element inet securebox abuse4 "{ $(IFS=,; echo "${chunk[*]}") }" 2>/dev/null || true
   fi
 
-  # Chains (recreate rules idempotently)
   nft list chain inet securebox input >/dev/null 2>&1 \
     || nft add chain inet securebox input '{ type filter hook input priority -10; policy accept; }'
   nft list chain inet securebox output >/dev/null 2>&1 \
     || nft add chain inet securebox output '{ type filter hook output priority -10; policy accept; }'
   nft flush chain inet securebox input 2>/dev/null || true
   nft flush chain inet securebox output 2>/dev/null || true
-  # Inbound only — outbound drops break GitHub/apt/CDN and prevent re-running the toolbox
+  # Inbound only
   nft add rule inet securebox input ip saddr @abuse4 drop
-  # Keep an empty output chain for compatibility with older installs; no drop rules
 
-  # Persist
   mkdir -p /etc/nftables.d
   nft list table inet securebox > /etc/nftables.d/securebox-abuse.nft
   if [[ -f /etc/nftables.conf ]]; then
@@ -86,12 +82,10 @@ _abuse_apply_nft() {
 
 _abuse_apply_iptables() {
   local -a cidrs=("$@")
-  # Create dedicated chains
   iptables -N SECUREBOX_ABUSE 2>/dev/null || iptables -F SECUREBOX_ABUSE
   iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
   iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
   iptables -I INPUT 1 -j SECUREBOX_ABUSE
-  # Do NOT hook OUTPUT — outbound cloud CIDR drops break package repos / GitHub
 
   local c
   for c in "${cidrs[@]}"; do
@@ -106,7 +100,6 @@ _abuse_apply_iptables() {
 }
 
 _abuse_harden_services() {
-  # Reduce classic Hetzner abuse vectors: open relays / resolvers / unused mail
   for svc in postfix exim4 sendmail named bind9 pdns-recursor; do
     if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}\."; then
       if systemctl is-active --quiet "$svc" 2>/dev/null; then
@@ -115,8 +108,6 @@ _abuse_harden_services() {
       fi
     fi
   done
-
-  # Discourage SMTP open relay exposure via UFW later; here just sysctl/network posture
   if have_cmd ufw; then
     ufw deny 25/tcp >/dev/null 2>&1 || true
     ufw deny 1900/udp >/dev/null 2>&1 || true
@@ -124,29 +115,44 @@ _abuse_harden_services() {
   fi
 }
 
-# Remove outbound abuse drops left by older toolbox versions (they break GitHub/apt)
+# Fully remove toolbox abuse blocks (used when user answered NO)
+_abuse_remove_all() {
+  if have_cmd nft; then
+    nft delete table inet securebox 2>/dev/null || true
+    rm -f /etc/nftables.d/securebox-abuse.nft 2>/dev/null || true
+  fi
+  if have_cmd iptables; then
+    iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -F SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -X SECUREBOX_ABUSE 2>/dev/null || true
+    if have_cmd netfilter-persistent; then
+      netfilter-persistent save >/dev/null 2>&1 || true
+    elif [[ -d /etc/iptables ]]; then
+      iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+    fi
+  fi
+}
+
 _abuse_repair_outbound() {
   if have_cmd nft; then
     nft flush chain inet securebox output 2>/dev/null || true
-    if [[ -f /etc/nftables.d/securebox-abuse.nft ]]; then
-      nft list table inet securebox > /etc/nftables.d/securebox-abuse.nft 2>/dev/null || true
-    fi
   fi
   if have_cmd iptables; then
     iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-    # Drop any -d DROP rules inside chain (rebuild leaves inbound-only via module apply)
-    while iptables -D SECUREBOX_ABUSE -d 0.0.0.0/0 -j DROP 2>/dev/null; do :; done
   fi
 }
 
 module_abuse() {
-  ui_step "Abuse IP range blocking + anti-abuse posture"
+  ui_step "Abuse IP range blocking"
 
-  # Heal previous builds that blocked outbound (broke GitHub / apt / re-run)
   _abuse_repair_outbound
 
-  if ! is_true "${SECUREBOX_ANSWERS[block_abuse]:-yes}"; then
-    module_skip "abuse" "user declined abuse range blocking"
+  # STRICT: never block unless user explicitly said yes
+  if ! require_answer_yes block_abuse abuse "user did not enable abuse IP blocking"; then
+    ui_info "Abuse blocking disabled by your answer — removing any previous SecureBox abuse rules."
+    _abuse_remove_all
+    module_skip "abuse" "block_abuse!=yes (answer='${SECUREBOX_ANSWERS[block_abuse]:-}')"
     return 0
   fi
 
@@ -164,7 +170,7 @@ module_abuse() {
     return 0
   fi
 
-  ui_info "Loaded ${#CIDRS[@]} CIDR ranges from $(basename "$file")"
+  ui_info "Loaded ${#CIDRS[@]} CIDR ranges from $(basename "$file") [explicitly enabled]"
   _abuse_harden_services
 
   if ! _abuse_ensure_nft_or_iptables; then
@@ -173,11 +179,11 @@ module_abuse() {
     return 0
   fi
 
-  ui_info "Applying blocklist via ${ABUSE_BACKEND}..."
+  ui_info "Applying inbound blocklist via ${ABUSE_BACKEND}..."
   if [[ "$ABUSE_BACKEND" == "nft" ]]; then
     if _abuse_apply_nft "${CIDRS[@]}"; then
       module_ok "abuse"
-      ui_success "Blocked ${#CIDRS[@]} abuse CIDRs with nftables (in+out)"
+      ui_success "Blocked ${#CIDRS[@]} abuse CIDRs with nftables (inbound only)"
     else
       module_fail "abuse" "nft apply failed"
       confirm_continue_on_error "abuse" "nft apply failed" || return 1
@@ -185,7 +191,7 @@ module_abuse() {
   else
     if _abuse_apply_iptables "${CIDRS[@]}"; then
       module_ok "abuse"
-      ui_success "Blocked ${#CIDRS[@]} abuse CIDRs with iptables (in+out)"
+      ui_success "Blocked ${#CIDRS[@]} abuse CIDRs with iptables (inbound only)"
     else
       module_fail "abuse" "iptables apply failed"
       confirm_continue_on_error "abuse" "iptables apply failed" || return 1

@@ -4,7 +4,7 @@
 
 set -o pipefail
 
-SECUREBOX_VERSION="0.1.0-beta"
+SECUREBOX_VERSION="0.1.1"
 SECUREBOX_NAME="MrClock"
 SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
@@ -74,6 +74,33 @@ is_true() {
     1|y|yes|true|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Strict: only explicit yes. Empty / unset / "no" => false. Never default optional work to on.
+answered_yes() {
+  local key="$1"
+  local val="${SECUREBOX_ANSWERS[$key]:-}"
+  is_true "$val"
+}
+
+answered_no() {
+  local key="$1"
+  local val="${SECUREBOX_ANSWERS[$key]:-}"
+  case "${val,,}" in
+    0|n|no|false|off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_answer_yes() {
+  # usage: require_answer_yes key module_name "human reason"
+  local key="$1" mod="$2" why="${3:-not explicitly enabled by user}"
+  if answered_yes "$key"; then
+    log INFO "Answer check OK: ${key}=${SECUREBOX_ANSWERS[$key]}"
+    return 0
+  fi
+  log INFO "Answer check SKIP: ${key}='${SECUREBOX_ANSWERS[$key]:-}' (${why})"
+  return 1
 }
 
 trim() {
