@@ -43,6 +43,17 @@ ui_line() {
 
 ui_banner() {
   ui_clear
+  # Always refresh live facts before drawing header
+  if declare -F detect_os >/dev/null 2>&1; then
+    detect_os >/dev/null 2>&1 || true
+  fi
+  if declare -F detect_network_stack >/dev/null 2>&1; then
+    detect_network_stack
+  fi
+  if declare -F detect_dns_manager >/dev/null 2>&1; then
+    detect_dns_manager
+  fi
+
   cat <<EOF
 ${C_ORANGE}${C_BOLD}
    ███╗   ███╗██████╗  ██████╗██╗      ██████╗  ██████╗██╗  ██╗
@@ -54,14 +65,52 @@ ${C_ORANGE}${C_BOLD}
 ${C_RESET}${C_DIM}   VPN Hardening & Optimization Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
 EOF
   ui_line 72
-  if [[ -n "${OS_PRETTY:-}" ]]; then
-    printf '   %sHost:%s %s  %s·%s  %sKernel:%s %s\n' \
-      "$C_GRAY" "$C_RESET" "$(hostname -f 2>/dev/null || hostname)" \
-      "$C_GRAY" "$C_RESET" \
-      "$C_GRAY" "$C_RESET" "$(uname -r)"
-    printf '   %sOS:%s   %s\n' "$C_GRAY" "$C_RESET" "$OS_PRETTY"
-    ui_line 72
+  ui_server_status_panel
+}
+
+ui_server_status_panel() {
+  local host iface mtu dns cc qdisc ssh_ports ufw_st ipv6_st f2b_st
+  host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo unknown)"
+  iface="${NET_DEFAULT_IFACE:-unknown}"
+  mtu="${NET_DEFAULT_MTU:-?}"
+  if ((${#DNS_CURRENT[@]})); then
+    dns="${DNS_CURRENT[*]}"
+  else
+    dns="(none)"
   fi
+  cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo n/a)"
+  qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo n/a)"
+  ssh_ports="$(grep -hE '^[Pp]ort ' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}' | sort -u | tr '\n' ' ')"
+  ssh_ports="$(echo "$ssh_ports" | sed 's/[[:space:]]*$//')"
+  [[ -n "$ssh_ports" ]] || ssh_ports="22"
+
+  if have_cmd ufw 2>/dev/null; then
+    ufw_st="$(ufw status 2>/dev/null | head -n1 | sed 's/Status: //')"
+  else
+    ufw_st="n/a"
+  fi
+  if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)" == "1" ]]; then
+    ipv6_st="disabled"
+  else
+    ipv6_st="enabled"
+  fi
+  if have_cmd systemctl && systemctl is-active --quiet fail2ban 2>/dev/null; then
+    f2b_st="active"
+  else
+    f2b_st="inactive"
+  fi
+
+  printf '   %sHost:%s %-28s %sKernel:%s %s\n' \
+    "$C_GRAY" "$C_RESET" "$host" "$C_GRAY" "$C_RESET" "$(uname -r)"
+  printf '   %sOS:%s   %s\n' "$C_GRAY" "$C_RESET" "${OS_PRETTY:-unknown}"
+  printf '   %sNet:%s  iface=%s  mtu=%s  stack=%s\n' \
+    "$C_GRAY" "$C_RESET" "$iface" "$mtu" "${NET_STACK:-unknown}"
+  printf '   %sDNS:%s  %s (%s)\n' "$C_GRAY" "$C_RESET" "$dns" "${DNS_MANAGER:-unknown}"
+  printf '   %sTCP:%s  %s + %s    %sSSH:%s %s\n' \
+    "$C_GRAY" "$C_RESET" "$cc" "$qdisc" "$C_GRAY" "$C_RESET" "$ssh_ports"
+  printf '   %sUFW:%s  %-12s %sIPv6:%s %-10s %sF2B:%s %s\n' \
+    "$C_GRAY" "$C_RESET" "$ufw_st" "$C_GRAY" "$C_RESET" "$ipv6_st" "$C_GRAY" "$C_RESET" "$f2b_st"
+  ui_line 72
 }
 
 ui_info()    { printf '%sℹ%s  %s\n' "$C_ORANGE" "$C_RESET" "$*"; log INFO "$*"; }

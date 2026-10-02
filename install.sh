@@ -1,22 +1,45 @@
 #!/usr/bin/env bash
 # =============================================================================
-# SecureBox — VPN Hardening & Optimization Toolbox
+# MrClock ToolBox — VPN Hardening & Optimization
 # Ubuntu 22–26 · Debian 12–13
 # =============================================================================
-# One-liner (install + run):
+# One-liner:
 #   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash
-# With flags:
-#   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
+# After first install, re-run anytime without network:
+#   sudo mrclock
 # =============================================================================
 set -o pipefail
 
 SECUREBOX_REPO="${SECUREBOX_REPO:-Mrclocks/ToolBox}"
 SECUREBOX_REF="${SECUREBOX_REF:-v0.1.0-beta}"
+SECUREBOX_INSTALL_DIR="${SECUREBOX_INSTALL_DIR:-/opt/mrclock-toolbox}"
+SECUREBOX_BIN_LINK="${SECUREBOX_BIN_LINK:-/usr/local/bin/mrclock}"
 
-# --- Bootstrap: support true one-liner (curl | bash) and lone install.sh ---
+# --- Bootstrap: local install first, then one-liner fetch ---
 _securebox_have_tree() {
   local root="$1"
   [[ -f "${root}/lib/common.sh" && -f "${root}/lib/runner.sh" && -d "${root}/modules" && -d "${root}/data" ]]
+}
+
+_securebox_install_persistent() {
+  local src="$1"
+  [[ -n "$src" ]] && _securebox_have_tree "$src" || return 1
+  mkdir -p "$SECUREBOX_INSTALL_DIR"
+  # Copy tree (portable; no rsync required)
+  rm -rf "${SECUREBOX_INSTALL_DIR:?}/lib" "${SECUREBOX_INSTALL_DIR}/modules" "${SECUREBOX_INSTALL_DIR}/data" 2>/dev/null || true
+  cp -a "${src}/lib" "${src}/modules" "${src}/data" "$SECUREBOX_INSTALL_DIR/"
+  cp -a "${src}/install.sh" "$SECUREBOX_INSTALL_DIR/install.sh"
+  [[ -f "${src}/VERSION" ]] && cp -a "${src}/VERSION" "$SECUREBOX_INSTALL_DIR/VERSION" || true
+  [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$SECUREBOX_INSTALL_DIR/LICENSE" || true
+  [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$SECUREBOX_INSTALL_DIR/README.md" || true
+  chmod 755 "$SECUREBOX_INSTALL_DIR/install.sh"
+  mkdir -p "$(dirname "$SECUREBOX_BIN_LINK")"
+  cat >"$SECUREBOX_BIN_LINK" <<EOF
+#!/usr/bin/env bash
+exec bash "${SECUREBOX_INSTALL_DIR}/install.sh" "\$@"
+EOF
+  chmod 755 "$SECUREBOX_BIN_LINK"
+  echo "[MrClock] Installed to ${SECUREBOX_INSTALL_DIR} (command: mrclock)" >&2
 }
 
 _securebox_fetch_tree() {
@@ -25,18 +48,19 @@ _securebox_fetch_tree() {
   archive="${tmp}/securebox.tgz"
 
   url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
-  echo "[SecureBox] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
+  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
   if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive"; then
     url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
     curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
-      echo "[SecureBox] ERROR: failed to download release archive." >&2
+      echo "[MrClock] ERROR: failed to download release archive." >&2
+      echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
       rm -rf "$tmp"
       exit 1
     }
   fi
 
   tar -xzf "$archive" -C "$tmp" || {
-    echo "[SecureBox] ERROR: failed to extract archive." >&2
+    echo "[MrClock] ERROR: failed to extract archive." >&2
     rm -rf "$tmp"
     exit 1
   }
@@ -44,46 +68,62 @@ _securebox_fetch_tree() {
   local extracted
   extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'ToolBox-*' | head -n1)"
   if [[ -z "$extracted" ]] || ! _securebox_have_tree "$extracted"; then
-    echo "[SecureBox] ERROR: archive layout unexpected." >&2
+    echo "[MrClock] ERROR: archive layout unexpected." >&2
     rm -rf "$tmp"
     exit 1
   fi
 
-  # Persist fetch dir for this run; cleaned on reboot via /tmp
   printf '%s\n' "$extracted"
 }
 
 _securebox_bootstrap() {
   local candidate=""
-  # Local checkout / extracted copy
+
+  # 1) Running from a full checkout / persistent install
   if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if _securebox_have_tree "$candidate"; then
       SECUREBOX_ROOT="$candidate"
+      # Keep persistent copy fresh when running from a newer tree
+      if [[ "$candidate" != "$SECUREBOX_INSTALL_DIR" ]]; then
+        _securebox_install_persistent "$candidate" 2>/dev/null || true
+      fi
       return 0
     fi
   fi
 
-  # Already bootstrapped in this process
+  # 2) Prefer previously installed local copy (works even if GitHub is unreachable)
+  if _securebox_have_tree "$SECUREBOX_INSTALL_DIR"; then
+    SECUREBOX_ROOT="$SECUREBOX_INSTALL_DIR"
+    if [[ "${SECUREBOX_BOOTSTRAPPED:-0}" != "1" ]]; then
+      export SECUREBOX_BOOTSTRAPPED=1
+      export SECUREBOX_ROOT
+      echo "[MrClock] Using local install: ${SECUREBOX_INSTALL_DIR}" >&2
+      exec bash "${SECUREBOX_INSTALL_DIR}/install.sh" "$@"
+    fi
+    return 0
+  fi
+
   if [[ -n "${SECUREBOX_ROOT:-}" ]] && _securebox_have_tree "$SECUREBOX_ROOT"; then
     return 0
   fi
 
-  # curl|bash or standalone install.sh without modules → fetch full tree & re-exec
   if [[ "${SECUREBOX_BOOTSTRAPPED:-0}" == "1" ]]; then
-    echo "[SecureBox] ERROR: bootstrap loop detected." >&2
+    echo "[MrClock] ERROR: bootstrap loop detected." >&2
     exit 1
   fi
 
+  # 3) First-time / one-liner: fetch release, install persistently, re-exec
   local extracted
   extracted="$(_securebox_fetch_tree)"
+  _securebox_install_persistent "$extracted" || true
   export SECUREBOX_BOOTSTRAPPED=1
-  export SECUREBOX_ROOT="$extracted"
-
-  echo "[SecureBox] Starting from ${extracted}" >&2
-  # Re-exec the full tree. Interactive prompts use /dev/tty via ui_read
-  # so curl|bash still works on a real server TTY.
-  exec bash "${extracted}/install.sh" "$@"
+  export SECUREBOX_ROOT="${SECUREBOX_INSTALL_DIR}"
+  if ! _securebox_have_tree "$SECUREBOX_ROOT"; then
+    SECUREBOX_ROOT="$extracted"
+  fi
+  echo "[MrClock] Starting from ${SECUREBOX_ROOT}" >&2
+  exec bash "${SECUREBOX_ROOT}/install.sh" "$@"
 }
 
 _securebox_bootstrap "$@"
@@ -102,7 +142,6 @@ source "${SECUREBOX_ROOT}/lib/questions.sh"
 source "${SECUREBOX_ROOT}/lib/runner.sh"
 
 source_modules
-
 usage() {
   cat <<EOF
 ${SECUREBOX_NAME} v${SECUREBOX_VERSION}
@@ -304,6 +343,16 @@ main() {
   assert_supported_os
   detect_network_stack
   detect_dns_manager
+
+  # Auto-heal outbound abuse blocks from older betas so re-runs / updates work
+  if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
+    _abuse_repair_outbound
+  fi
+
+  # Ensure local launcher exists for next run without curl
+  if _securebox_have_tree "${SECUREBOX_ROOT}"; then
+    _securebox_install_persistent "${SECUREBOX_ROOT}" 2>/dev/null || true
+  fi
 
   log INFO "MrClock toolbox ${SECUREBOX_VERSION} starting on ${OS_PRETTY}"
 
