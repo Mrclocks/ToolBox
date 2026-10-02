@@ -5,6 +5,10 @@
 
 module_bbr() {
   ui_step "Enable BBR + low-latency network tuning"
+  if ! require_answer_yes do_bbr bbr "BBR tuning not explicitly enabled"; then
+    module_skip "bbr" "do_bbr='${SECUREBOX_ANSWERS[do_bbr]:-}'"
+    return 0
+  fi
 
   # Ensure sch_fq / tcp_bbr available
   modprobe tcp_bbr >/dev/null 2>&1 || true

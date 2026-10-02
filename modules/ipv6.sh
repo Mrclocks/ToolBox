@@ -5,9 +5,8 @@
 module_ipv6() {
   ui_step "IPv6 policy"
 
-  if ! is_true "${SECUREBOX_ANSWERS[disable_ipv6]:-no}"; then
-    module_skip "ipv6" "IPv6 left enabled"
-    ui_info "IPv6 remains enabled"
+  if ! require_answer_yes disable_ipv6 ipv6 "IPv6 disable not explicitly requested"; then
+    module_skip "ipv6" "disable_ipv6='${SECUREBOX_ANSWERS[disable_ipv6]:-}' — left unchanged"
     return 0
   fi
 

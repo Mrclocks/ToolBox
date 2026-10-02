@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Module: Fail2Ban
+# Module: Fail2Ban — only when explicitly enabled
 # shellcheck shell=bash
 
 module_fail2ban() {
   ui_step "Fail2Ban"
+
+  if ! require_answer_yes enable_fail2ban fail2ban "Fail2Ban not explicitly enabled"; then
+    module_skip "fail2ban" "enable_fail2ban='${SECUREBOX_ANSWERS[enable_fail2ban]:-}'"
+    return 0
+  fi
+
   if ! apt_install_safe fail2ban; then
     module_fail "fail2ban" "install failed"
     confirm_continue_on_error "fail2ban" "install failed" || return 1
@@ -28,7 +34,7 @@ module_fail2ban() {
   maxretry="${SECUREBOX_ANSWERS[f2b_maxretry]:-4}"
 
   cat >/etc/fail2ban/jail.d/securebox.conf <<EOF
-# Managed by SecureBox ${SECUREBOX_VERSION}
+# Managed by MrClock ${SECUREBOX_VERSION}
 [DEFAULT]
 bantime  = ${bantime}
 findtime = ${findtime}

@@ -4,6 +4,10 @@
 
 module_update() {
   ui_step "System update & upgrade"
+  if ! require_answer_yes do_update update "system update not explicitly enabled"; then
+    module_skip "update" "do_update='${SECUREBOX_ANSWERS[do_update]:-}'"
+    return 0
+  fi
   export DEBIAN_FRONTEND=noninteractive
 
   if ! apt_update_safe; then

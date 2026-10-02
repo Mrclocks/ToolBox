@@ -23,7 +23,14 @@ dns_preset_labels() {
 
 dns_resolve_choice() {
   # Sets DNS_PRIMARY DNS_SECONDARY DNS_CHOICE_ID from SECUREBOX_ANSWERS
-  local idx="${SECUREBOX_ANSWERS[dns_choice]:-1}"
+  # No silent default to cloudflare — require an explicit choice index/id
+  local idx="${SECUREBOX_ANSWERS[dns_choice]:-}"
+  if [[ -z "$idx" ]]; then
+    DNS_CHOICE_ID="${SECUREBOX_ANSWERS[dns_id]:-}"
+    DNS_PRIMARY="${SECUREBOX_ANSWERS[dns_primary]:-}"
+    DNS_SECONDARY="${SECUREBOX_ANSWERS[dns_secondary]:-}"
+    return 0
+  fi
   local p="${DNS_PRESETS[$((idx - 1))]}"
   local id label primary secondary
   IFS='|' read -r id label primary secondary <<<"$p"
@@ -57,6 +64,12 @@ dns_resolve_choice() {
 module_dns() {
   ui_step "Configure DNS"
   detect_dns_manager
+
+  if [[ -z "${SECUREBOX_ANSWERS[dns_choice]:-}" && -z "${SECUREBOX_ANSWERS[dns_id]:-}" ]]; then
+    module_skip "dns" "no DNS choice from user"
+    return 0
+  fi
+
   dns_resolve_choice
 
   if [[ "$DNS_CHOICE_ID" == "keep" ]]; then

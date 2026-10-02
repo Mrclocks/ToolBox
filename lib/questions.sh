@@ -157,30 +157,12 @@ ask_ssh() {
   esac
 }
 
-ask_ufw() {
-  echo
-  ui_info "Discovering listening ports..."
-  local discovered
-  discovered="$(discover_public_ports | awk '{printf "%s/%s ", $2, $1}')"
-  discovered="$(trim "$discovered")"
-  [[ -n "$discovered" ]] && ui_info "Discovered: ${discovered}" || ui_info "No public listeners found (besides what appears later)."
-
-  if ui_confirm "Enable UFW after applying rules?" "Y"; then
-    SECUREBOX_ANSWERS[ufw_enable]=yes
+ask_abuse() {
+  if ui_confirm "Block curated abuse/scanner IP ranges (inbound)?" "N"; then
+    SECUREBOX_ANSWERS[block_abuse]=yes
   else
-    SECUREBOX_ANSWERS[ufw_enable]=no
+    SECUREBOX_ANSWERS[block_abuse]=no
   fi
-
-  if ui_confirm "Auto-allow all currently discovered public ports?" "Y"; then
-    SECUREBOX_ANSWERS[ufw_auto_discover]=yes
-  else
-    SECUREBOX_ANSWERS[ufw_auto_discover]=no
-  fi
-
-  local extra
-  ui_ask extra "Extra ports to allow (e.g. 443 51820/udp 80/tcp) — empty to skip" ""
-  SECUREBOX_ANSWERS[ufw_ports]="$extra"
-  SECUREBOX_ANSWERS[ufw_reset]=yes
 }
 
 ask_ipv6() {
@@ -191,16 +173,8 @@ ask_ipv6() {
   fi
 }
 
-ask_abuse() {
-  if ui_confirm "Block curated abuse/scanner IP ranges (full CIDR block in+out)?" "Y"; then
-    SECUREBOX_ANSWERS[block_abuse]=yes
-  else
-    SECUREBOX_ANSWERS[block_abuse]=no
-  fi
-}
-
 ask_unattended() {
-  if ui_confirm "Enable automatic security updates (unattended-upgrades)?" "Y"; then
+  if ui_confirm "Enable automatic security updates (unattended-upgrades)?" "N"; then
     SECUREBOX_ANSWERS[unattended]=yes
   else
     SECUREBOX_ANSWERS[unattended]=no
@@ -209,7 +183,7 @@ ask_unattended() {
 }
 
 ask_services() {
-  if ui_confirm "Disable common unused services (avahi/cups/bluetooth/...)?" "Y"; then
+  if ui_confirm "Disable common unused services (avahi/cups/bluetooth/...)?" "N"; then
     SECUREBOX_ANSWERS[disable_unused]=yes
   else
     SECUREBOX_ANSWERS[disable_unused]=no
@@ -217,10 +191,51 @@ ask_services() {
   SECUREBOX_ANSWERS[disable_snapd]=no
 }
 
-ask_fail2ban_params() {
+ask_fail2ban() {
+  if ui_confirm "Enable Fail2Ban for SSH brute-force protection?" "N"; then
+    SECUREBOX_ANSWERS[enable_fail2ban]=yes
+  else
+    SECUREBOX_ANSWERS[enable_fail2ban]=no
+  fi
   SECUREBOX_ANSWERS[f2b_bantime]=1h
   SECUREBOX_ANSWERS[f2b_findtime]=10m
   SECUREBOX_ANSWERS[f2b_maxretry]=4
+}
+
+ask_fail2ban_params() {
+  # Back-compat alias
+  ask_fail2ban
+}
+
+ask_ufw() {
+  echo
+  ui_info "Discovering listening ports..."
+  local discovered
+  discovered="$(discover_public_ports | awk '{printf "%s/%s ", $2, $1}')"
+  discovered="$(trim "$discovered")"
+  [[ -n "$discovered" ]] && ui_info "Discovered: ${discovered}" || ui_info "No public listeners found (besides what appears later)."
+
+  if ui_confirm "Enable UFW after applying rules?" "N"; then
+    SECUREBOX_ANSWERS[ufw_enable]=yes
+    if ui_confirm "Reset existing UFW rules before applying?" "N"; then
+      SECUREBOX_ANSWERS[ufw_reset]=yes
+    else
+      SECUREBOX_ANSWERS[ufw_reset]=no
+    fi
+    if ui_confirm "Auto-allow all currently discovered public ports?" "N"; then
+      SECUREBOX_ANSWERS[ufw_auto_discover]=yes
+    else
+      SECUREBOX_ANSWERS[ufw_auto_discover]=no
+    fi
+    local extra
+    ui_ask extra "Extra ports to allow (e.g. 443 51820/udp 80/tcp) — empty to skip" ""
+    SECUREBOX_ANSWERS[ufw_ports]="$extra"
+  else
+    SECUREBOX_ANSWERS[ufw_enable]=no
+    SECUREBOX_ANSWERS[ufw_reset]=no
+    SECUREBOX_ANSWERS[ufw_auto_discover]=no
+    SECUREBOX_ANSWERS[ufw_ports]=""
+  fi
 }
 
 review_answers() {
@@ -237,8 +252,10 @@ review_answers() {
   ui_kv "Disable IPv6" "${SECUREBOX_ANSWERS[disable_ipv6]:-}"
   ui_kv "Block abuse ranges" "${SECUREBOX_ANSWERS[block_abuse]:-}"
   ui_kv "UFW enable" "${SECUREBOX_ANSWERS[ufw_enable]:-}"
+  ui_kv "UFW reset" "${SECUREBOX_ANSWERS[ufw_reset]:-}"
   ui_kv "UFW auto ports" "${SECUREBOX_ANSWERS[ufw_auto_discover]:-}"
   ui_kv "UFW extra" "${SECUREBOX_ANSWERS[ufw_ports]:-(none)}"
+  ui_kv "Fail2Ban" "${SECUREBOX_ANSWERS[enable_fail2ban]:-}"
   ui_kv "Unattended upgrades" "${SECUREBOX_ANSWERS[unattended]:-}"
   ui_kv "Disable unused svcs" "${SECUREBOX_ANSWERS[disable_unused]:-}"
   ui_box_end
@@ -247,31 +264,44 @@ review_answers() {
 questionnaire_all() {
   SECUREBOX_ANSWERS[continue_on_error]=yes
   ui_clear
-  ui_step "Questions first — then everything will be applied"
+  ui_step "Questions first — then only your answers will be applied"
   ask_dns
   ask_mtu
   ask_ssh
   ask_ipv6
   ask_abuse
   ask_ufw
-  ask_fail2ban_params
+  ask_fail2ban
   ask_unattended
   ask_services
   review_answers
-  if ! ui_confirm "Proceed with Apply All using these answers?" "Y"; then
+  if ! ui_confirm "Proceed using ONLY these answers (nothing else will be forced)?" "Y"; then
     ui_warn "Cancelled by user."
     return 1
   fi
+  # Core Apply All steps — user chose Apply All, so these are intentional
+  SECUREBOX_ANSWERS[do_update]=yes
+  SECUREBOX_ANSWERS[do_timesync]=yes
+  SECUREBOX_ANSWERS[do_bbr]=yes
+  SECUREBOX_ANSWERS[do_ssh]=yes
   return 0
 }
 
 # Per-feature questionnaires (only what that feature needs)
 questionnaire_dns_only() { questionnaire_common_safety; ask_dns; review_answers; ui_confirm "Apply DNS now?" "Y"; }
 questionnaire_mtu_only() { questionnaire_common_safety; ask_mtu; review_answers; ui_confirm "Apply MTU now?" "Y"; }
-questionnaire_ssh_only() { questionnaire_common_safety; ask_ssh; review_answers; ui_confirm "Apply SSH changes now?" "Y"; }
+questionnaire_ssh_only() {
+  questionnaire_common_safety
+  ask_ssh
+  review_answers
+  if ui_confirm "Apply SSH changes now?" "Y"; then
+    SECUREBOX_ANSWERS[do_ssh]=yes
+    return 0
+  fi
+  return 1
+}
 questionnaire_ufw_only() {
   questionnaire_common_safety
-  # Need ssh ports for safety
   SECUREBOX_ANSWERS[ssh_current_port]="$(_ssh_current_port 2>/dev/null || echo 22)"
   SECUREBOX_ANSWERS[ssh_port]="${SECUREBOX_ANSWERS[ssh_current_port]}"
   ask_ufw
@@ -279,7 +309,7 @@ questionnaire_ufw_only() {
   review_answers
   ui_confirm "Apply UFW now?" "Y"
 }
-questionnaire_abuse_only() { questionnaire_common_safety; ask_abuse; review_answers; ui_confirm "Apply abuse blocking now?" "Y"; }
+questionnaire_abuse_only() { questionnaire_common_safety; ask_abuse; review_answers; ui_confirm "Apply abuse policy now?" "Y"; }
 questionnaire_ipv6_only() { questionnaire_common_safety; ask_ipv6; review_answers; ui_confirm "Apply IPv6 policy now?" "Y"; }
 questionnaire_unattended_only() { questionnaire_common_safety; ask_unattended; review_answers; ui_confirm "Apply unattended-upgrades now?" "Y"; }
 questionnaire_services_only() { questionnaire_common_safety; ask_services; review_answers; ui_confirm "Apply service cleanup now?" "Y"; }
@@ -287,8 +317,23 @@ questionnaire_fail2ban_only() {
   questionnaire_common_safety
   SECUREBOX_ANSWERS[ssh_current_port]="$(_ssh_current_port 2>/dev/null || echo 22)"
   SECUREBOX_ANSWERS[ssh_port]="${SECUREBOX_ANSWERS[ssh_current_port]}"
-  ask_fail2ban_params
-  ui_confirm "Enable Fail2Ban now?" "Y"
+  ask_fail2ban
+  review_answers
+  ui_confirm "Apply Fail2Ban setting now?" "Y"
 }
-questionnaire_bbr_only() { questionnaire_common_safety; ui_confirm "Apply BBR + network tuning now?" "Y"; }
-questionnaire_update_only() { questionnaire_common_safety; ui_confirm "Run system update & upgrade now?" "Y"; }
+questionnaire_bbr_only() {
+  questionnaire_common_safety
+  if ui_confirm "Apply BBR + network tuning now?" "Y"; then
+    SECUREBOX_ANSWERS[do_bbr]=yes
+    return 0
+  fi
+  return 1
+}
+questionnaire_update_only() {
+  questionnaire_common_safety
+  if ui_confirm "Run system update & upgrade now?" "Y"; then
+    SECUREBOX_ANSWERS[do_update]=yes
+    return 0
+  fi
+  return 1
+}

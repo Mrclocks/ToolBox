@@ -48,6 +48,11 @@ _ssh_reload() {
 module_ssh() {
   ui_step "SSH port & hardening"
 
+  if ! require_answer_yes do_ssh ssh "SSH changes not explicitly enabled"; then
+    module_skip "ssh" "do_ssh='${SECUREBOX_ANSWERS[do_ssh]:-}'"
+    return 0
+  fi
+
   local conf
   conf="$(_ssh_config_path)" || {
     module_fail "ssh" "sshd_config not found"
