@@ -4,13 +4,13 @@
 
 # Preset catalog: id|label|primary|secondary
 DNS_PRESETS=(
-  "cloudflare|Cloudflare (1.1.1.1) — fast & private|1.1.1.1|1.0.0.1"
-  "google|Google (8.8.8.8) — widely compatible|8.8.8.8|8.8.4.4"
-  "quad9|Quad9 (9.9.9.9) — malware blocking|9.9.9.9|149.112.112.112"
+  "cloudflare|Cloudflare (1.1.1.1) - fast & private|1.1.1.1|1.0.0.1"
+  "google|Google (8.8.8.8) - widely compatible|8.8.8.8|8.8.4.4"
+  "quad9|Quad9 (9.9.9.9) - malware blocking|9.9.9.9|149.112.112.112"
   "opendns|OpenDNS (208.67.222.222)|208.67.222.222|208.67.220.220"
-  "adguard|AdGuard (94.140.14.14) — ads/trackers|94.140.14.14|94.140.15.15"
+  "adguard|AdGuard (94.140.14.14) - ads/trackers|94.140.14.14|94.140.15.15"
   "keep|Keep current DNS||"
-  "custom|Custom DNS servers||"
+  "custom|Custom DNS servers (manual entry)||"
 )
 
 dns_preset_labels() {
@@ -25,8 +25,17 @@ dns_resolve_choice() {
   # Sets DNS_PRIMARY DNS_SECONDARY DNS_CHOICE_ID from SECUREBOX_ANSWERS
   local idx="${SECUREBOX_ANSWERS[dns_choice]:-1}"
   local p="${DNS_PRESETS[$((idx - 1))]}"
+  local id label primary secondary
   IFS='|' read -r id label primary secondary <<<"$p"
   DNS_CHOICE_ID="$id"
+
+  # Prefer values already resolved during questionnaire
+  if [[ -n "${SECUREBOX_ANSWERS[dns_primary]:-}" && "$id" != "keep" ]]; then
+    DNS_PRIMARY="${SECUREBOX_ANSWERS[dns_primary]}"
+    DNS_SECONDARY="${SECUREBOX_ANSWERS[dns_secondary]:-}"
+    return 0
+  fi
+
   case "$id" in
     keep)
       DNS_PRIMARY="${DNS_CURRENT[0]:-}"
@@ -39,6 +48,8 @@ dns_resolve_choice() {
     *)
       DNS_PRIMARY="$primary"
       DNS_SECONDARY="$secondary"
+      SECUREBOX_ANSWERS[dns_primary]="$primary"
+      SECUREBOX_ANSWERS[dns_secondary]="$secondary"
       ;;
   esac
 }

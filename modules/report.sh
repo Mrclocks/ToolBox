@@ -34,7 +34,7 @@ module_report() {
 
   echo
   ui_line 72
-  printf '%s%s  SecureBox — completion report%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+  printf '%s%s  MrClock — completion report%s\n' "$C_BOLD" "$C_ORANGE" "$C_RESET"
   ui_line 72
   ui_kv "OS" "$OS_PRETTY"
   ui_kv "Log file" "$SECUREBOX_LOG"
