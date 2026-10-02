@@ -48,14 +48,14 @@
 فقط **یک خط** — دانلود + نصب ماژول‌ها + اجرای منو:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash
+curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash
 ```
 
 با فلگ (مثلاً One-Click):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
-curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash -s -- --one-click --dns cloudflare --mtu 1400 --ssh-port 22442
+curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
+curl -fsSL https://github.com/Mrclocks/ToolBox/releases/download/v0.1.0-beta/install.sh | sudo bash -s -- --one-click --dns cloudflare --mtu 1400 --ssh-port 22442
 ```
 
 اسکریپت اگر کامل نباشد، خودش آرشیو `v0.1.0-beta` را از GitHub می‌گیرد و اجرا را ادامه می‌دهد.
