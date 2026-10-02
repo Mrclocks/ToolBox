@@ -65,22 +65,37 @@ ui_kv() {
   printf '   %s%-22s%s %s\n' "$C_GRAY" "$1" "$C_RESET" "$2"
 }
 
+ui_read() {
+  # Read a line from the real terminal when stdin is a pipe (curl|bash).
+  local __dest="$1"
+  local __line=""
+  if [[ -t 0 ]]; then
+    read -r __line || __line=""
+  elif [[ -r /dev/tty ]]; then
+    read -r __line </dev/tty || __line=""
+  else
+    read -r __line || __line=""
+  fi
+  printf -v "$__dest" '%s' "$__line"
+}
+
 ui_pause() {
   local msg="${1:-Press Enter to continue...}"
-  if [[ -t 0 ]]; then
+  if [[ -t 0 || -r /dev/tty ]]; then
     printf '%s%s%s' "$C_DIM" "$msg" "$C_RESET"
-    read -r _
+    local _
+    ui_read _
   fi
 }
 
 ui_confirm() {
   local prompt="$1"
   local default="${2:-Y}"
-  local hint
+  local hint ans
   if [[ "${default^^}" == "Y" ]]; then hint="Y/n"; else hint="y/N"; fi
   while true; do
     printf '%s?%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$prompt" "$hint"
-    read -r ans || ans=""
+    ui_read ans
     ans="$(trim "${ans:-}")"
     if [[ -z "$ans" ]]; then
       [[ "${default^^}" == "Y" ]] && return 0 || return 1
@@ -104,7 +119,7 @@ ui_ask() {
   else
     printf '%s?%s %s: ' "$C_CYAN" "$C_RESET" "$__prompt"
   fi
-  read -r __ans || __ans=""
+  ui_read __ans
   __ans="$(trim "${__ans:-}")"
   if [[ -z "$__ans" ]]; then
     __ans="$__default"
@@ -158,7 +173,7 @@ ui_menu() {
   ui_line 56
   while true; do
     printf '%sSelect%s [1-%d]: ' "$C_CYAN" "$C_RESET" "${#__items[@]}"
-    read -r choice || choice=""
+    ui_read choice
     choice="$(trim "$choice")"
     if is_uint "$choice" && (( choice >= 1 && choice <= ${#__items[@]} )); then
       printf -v "$__var" '%s' "$choice"

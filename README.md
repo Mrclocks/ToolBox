@@ -45,36 +45,29 @@
 
 ## نصب و اجرا (تک‌خطی)
 
-از داخل سرور (با دسترسی root) — **نسخه 0.1.0-beta**:
+فقط **یک خط** — دانلود + نصب ماژول‌ها + اجرای منو:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh -o install.sh
-sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash
 ```
 
-یا از شاخه اصلی بعد از merge:
+با فلگ (مثلاً One-Click):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/main/install.sh -o install.sh
-sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
+curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash -s -- --one-click --dns cloudflare --mtu 1400 --ssh-port 22442
 ```
 
-یا کل مخزن:
+اسکریپت اگر کامل نباشد، خودش آرشیو `v0.1.0-beta` را از GitHub می‌گیرد و اجرا را ادامه می‌دهد.
+
+### روش‌های جایگزین
+
+کلون مخزن:
 
 ```bash
 git clone --branch v0.1.0-beta https://github.com/Mrclocks/ToolBox.git
 cd ToolBox
 sudo bash install.sh
-```
-
-> پیشنهاد امن‌تر: اول فایل را دانلود کن، یک نگاه به محتوا بینداز، بعد اجرا کن — نه `curl | bash` کور.
-
-### حالت غیرتعاملی (One-Click)
-
-```bash
-sudo bash install.sh --one-click
-sudo bash install.sh --one-click --ssh-port 22442 --dns cloudflare --mtu 1400
-sudo bash install.sh --one-click --disable-ipv6 --no-ufw
 ```
 
 ---

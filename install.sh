@@ -3,14 +3,93 @@
 # SecureBox — VPN Hardening & Optimization Toolbox
 # Ubuntu 22–26 · Debian 12–13
 # =============================================================================
-# One-liner (example):
-#   curl -fsSL https://raw.githubusercontent.com/<org>/<repo>/main/install.sh | sudo bash
-# Safer:
-#   curl -fsSL .../install.sh -o install.sh && sudo bash install.sh
+# One-liner (install + run):
+#   curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash
+# With flags:
+#   curl -fsSL https://raw.githubusercontent.com/Mrclocks/ToolBox/v0.1.0-beta/install.sh | sudo bash -s -- --one-click
 # =============================================================================
 set -o pipefail
 
-SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SECUREBOX_REPO="${SECUREBOX_REPO:-Mrclocks/ToolBox}"
+SECUREBOX_REF="${SECUREBOX_REF:-v0.1.0-beta}"
+
+# --- Bootstrap: support true one-liner (curl | bash) and lone install.sh ---
+_securebox_have_tree() {
+  local root="$1"
+  [[ -f "${root}/lib/common.sh" && -f "${root}/lib/runner.sh" && -d "${root}/modules" && -d "${root}/data" ]]
+}
+
+_securebox_fetch_tree() {
+  local tmp archive url
+  tmp="$(mktemp -d /tmp/securebox-fetch.XXXXXX)"
+  archive="${tmp}/securebox.tgz"
+
+  url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
+  echo "[SecureBox] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive"; then
+    url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
+    curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
+      echo "[SecureBox] ERROR: failed to download release archive." >&2
+      rm -rf "$tmp"
+      exit 1
+    }
+  fi
+
+  tar -xzf "$archive" -C "$tmp" || {
+    echo "[SecureBox] ERROR: failed to extract archive." >&2
+    rm -rf "$tmp"
+    exit 1
+  }
+
+  local extracted
+  extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'ToolBox-*' | head -n1)"
+  if [[ -z "$extracted" ]] || ! _securebox_have_tree "$extracted"; then
+    echo "[SecureBox] ERROR: archive layout unexpected." >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+
+  # Persist fetch dir for this run; cleaned on reboot via /tmp
+  printf '%s\n' "$extracted"
+}
+
+_securebox_bootstrap() {
+  local candidate=""
+  # Local checkout / extracted copy
+  if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if _securebox_have_tree "$candidate"; then
+      SECUREBOX_ROOT="$candidate"
+      return 0
+    fi
+  fi
+
+  # Already bootstrapped in this process
+  if [[ -n "${SECUREBOX_ROOT:-}" ]] && _securebox_have_tree "$SECUREBOX_ROOT"; then
+    return 0
+  fi
+
+  # curl|bash or standalone install.sh without modules → fetch full tree & re-exec
+  if [[ "${SECUREBOX_BOOTSTRAPPED:-0}" == "1" ]]; then
+    echo "[SecureBox] ERROR: bootstrap loop detected." >&2
+    exit 1
+  fi
+
+  local extracted
+  extracted="$(_securebox_fetch_tree)"
+  export SECUREBOX_BOOTSTRAPPED=1
+  export SECUREBOX_ROOT="$extracted"
+
+  echo "[SecureBox] Starting from ${extracted}" >&2
+  # Re-attach to the real TTY so interactive menus work after curl|bash
+  if [[ -r /dev/tty ]]; then
+    exec bash "${extracted}/install.sh" "$@" </dev/tty
+  else
+    exec bash "${extracted}/install.sh" "$@"
+  fi
+}
+
+_securebox_bootstrap "$@"
 
 # shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/common.sh"
@@ -129,8 +208,8 @@ menu_loop() {
     ui_line 56
     local choice
     printf '%sSelect%s: ' "$C_CYAN" "$C_RESET"
-    read -r choice || choice=0
-    choice="$(trim "$choice")"
+    ui_read choice
+    choice="$(trim "${choice:-0}")"
 
     case "$choice" in
       1)

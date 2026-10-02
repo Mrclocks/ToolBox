@@ -11,3 +11,4 @@
 - ماژول‌ها: update، chrony، DNS، MTU، BBR+fq، abuse CIDR block، UFW، SSH cutover، Fail2Ban، IPv6، unattended-upgrades، unused services، گزارش پایانی
 - فلگ‌های `--one-click` و پارامترهای غیرتعاملی
 - بکاپ و لاگ در `/var/backups/securebox` و `/var/log/securebox`
+- **One-liner واقعی:** `curl .../install.sh | sudo bash` (دانلود خودکار کل پکیج + اتصال به TTY)
