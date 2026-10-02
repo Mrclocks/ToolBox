@@ -258,10 +258,11 @@ parse_args() {
 
 menu_loop() {
   while true; do
-    # Full-screen clean draw: banner + menu only
+    # Full-screen clean draw every return to main menu
+    ui_clear
     ui_banner
     printf '%sMain menu%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
-    ui_line 56
+    ui_line 56 '-'
     printf '  %s 1)%s Apply All Features\n' "$C_GREEN" "$C_RESET"
     printf '  %s 2)%s System Update & Upgrade\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 3)%s Time Sync (chrony)\n' "$C_ORANGE" "$C_RESET"
@@ -277,7 +278,7 @@ menu_loop() {
     printf '  %s13)%s Disable Unused Services\n' "$C_ORANGE" "$C_RESET"
     printf '  %s14)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
-    ui_line 56
+    ui_line 56 '-'
     local choice
     printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
     ui_read choice

@@ -10,7 +10,6 @@ if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]]; then
   C_RED=$'\033[38;2;255;95;109m'
   C_GREEN=$'\033[38;2;80;250;123m'
   C_YELLOW=$'\033[38;2;255;184;108m'
-  # Brand orange (replaces blue/cyan accents)
   C_ORANGE=$'\033[38;2;255;140;0m'
   C_BLUE=$'\033[38;2;255;140;0m'
   C_CYAN=$'\033[38;2;255;140;0m'
@@ -23,19 +22,28 @@ else
 fi
 
 ui_clear() {
-  # Hard clear scrollback + screen so only the next draw remains
-  if [[ -t 1 ]]; then
-    printf '\033[3J\033[2J\033[H' 2>/dev/null || true
-    clear 2>/dev/null || true
-  fi
+  # Aggressive clear for mobile SSH / Termux / broken TTYs so old logs never stick
+  # \033c = full terminal reset; then wipe scrollback + home cursor
+  {
+    printf '\033c\033[3J\033[2J\033[H\033[0m'
+  } 2>/dev/null || true
   if [[ -w /dev/tty ]]; then
-    printf '\033[3J\033[2J\033[H' >/dev/tty 2>/dev/null || true
+    {
+      printf '\033c\033[3J\033[2J\033[H\033[0m' >/dev/tty
+    } 2>/dev/null || true
+    clear >/dev/tty 2>/dev/null || true
   fi
+  clear 2>/dev/null || true
+  # Final home — some clients ignore scrollback wipe
+  printf '\033[H\033[2J' 2>/dev/null || true
+  [[ -w /dev/tty ]] && printf '\033[H\033[2J' >/dev/tty 2>/dev/null || true
 }
 
 ui_line() {
+  # ASCII only — Unicode box chars become "?" on many mobile terminals
   local width="${1:-64}"
-  local char="${2:-─}"
+  local char="${2:-=}"
+  [[ ${#char} -eq 1 ]] || char='='
   printf '%s' "$C_GRAY"
   printf '%*s' "$width" '' | tr ' ' "$char"
   printf '%s\n' "$C_RESET"
@@ -56,15 +64,14 @@ ui_banner() {
 
   cat <<EOF
 ${C_ORANGE}${C_BOLD}
-   ███╗   ███╗██████╗  ██████╗██╗      ██████╗  ██████╗██╗  ██╗
-   ████╗ ████║██╔══██╗██╔════╝██║     ██╔═══██╗██╔════╝██║ ██╔╝
-   ██╔████╔██║██████╔╝██║     ██║     ██║   ██║██║     █████╔╝
-   ██║╚██╔╝██║██╔══██╗██║     ██║     ██║   ██║██║     ██╔═██╗
-   ██║ ╚═╝ ██║██║  ██║╚██████╗███████╗╚██████╔╝╚██████╗██║  ██╗
-   ╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
+   __  __       ____ _            _
+  |  \/  |_ __ / ___| | ___   ___| | __
+  | |\/| | '__| |   | |/ _ \ / __| |/ /
+  | |  | | |  | |___| | (_) | (__|   <
+  |_|  |_|_|   \____|_|\___/ \___|_|\_\\
 ${C_RESET}${C_DIM}   VPN Hardening & Optimization Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
 EOF
-  ui_line 72
+  ui_line 64
   ui_server_status_panel
 }
 
@@ -110,14 +117,14 @@ ui_server_status_panel() {
     "$C_GRAY" "$C_RESET" "$cc" "$qdisc" "$C_GRAY" "$C_RESET" "$ssh_ports"
   printf '   %sUFW:%s  %-12s %sIPv6:%s %-10s %sF2B:%s %s\n' \
     "$C_GRAY" "$C_RESET" "$ufw_st" "$C_GRAY" "$C_RESET" "$ipv6_st" "$C_GRAY" "$C_RESET" "$f2b_st"
-  ui_line 72
+  ui_line 64
 }
 
-ui_info()    { printf '%sℹ%s  %s\n' "$C_ORANGE" "$C_RESET" "$*"; log INFO "$*"; }
-ui_success() { printf '%s✔%s  %s\n' "$C_GREEN" "$C_RESET" "$*"; log INFO "$*"; }
-ui_warn()    { printf '%s⚠%s  %s\n' "$C_YELLOW" "$C_RESET" "$*"; log WARN "$*"; }
-ui_error()   { printf '%s✖%s  %s\n' "$C_RED" "$C_RESET" "$*"; log ERROR "$*"; }
-ui_step()    { printf '\n%s▸ %s%s\n' "$C_ORANGE$C_BOLD" "$*" "$C_RESET"; log INFO "STEP: $*"; }
+ui_info()    { printf '%s* %s%s\n' "$C_ORANGE" "$C_RESET" "$*"; log INFO "$*"; }
+ui_success() { printf '%s+ %s%s\n' "$C_GREEN" "$C_RESET" "$*"; log INFO "$*"; }
+ui_warn()    { printf '%s! %s%s\n' "$C_YELLOW" "$C_RESET" "$*"; log WARN "$*"; }
+ui_error()   { printf '%sx %s%s\n' "$C_RED" "$C_RESET" "$*"; log ERROR "$*"; }
+ui_step()    { printf '\n%s> %s%s\n' "$C_ORANGE$C_BOLD" "$*" "$C_RESET"; log INFO "STEP: $*"; }
 
 ui_kv() {
   printf '   %s%-22s%s %s\n' "$C_GRAY" "$1" "$C_RESET" "$2"
@@ -144,6 +151,8 @@ ui_pause() {
     local _
     ui_read _
   fi
+  # Ensure next screen starts clean after pause
+  ui_clear
 }
 
 ui_confirm() {
@@ -225,11 +234,11 @@ ui_menu() {
   local __i __sel
   echo
   printf '%s%s%s\n' "$C_BOLD$C_ORANGE" "$__title" "$C_RESET"
-  ui_line 56
+  ui_line 56 '-'
   for __i in "${!__items[@]}"; do
     printf '  %s%2d)%s %s\n' "$C_ORANGE" "$((__i + 1))" "$C_RESET" "${__items[$__i]}"
   done
-  ui_line 56
+  ui_line 56 '-'
   while true; do
     printf '%sSelect%s [1-%d]: ' "$C_ORANGE" "$C_RESET" "${#__items[@]}"
     ui_read __sel
@@ -252,17 +261,17 @@ ui_progress() {
     filled=$(( current * width / total ))
   fi
   local bar
-  bar="$(printf '%*s' "$filled" '' | tr ' ' '█')"
-  bar+="$(printf '%*s' "$((width - filled))" '' | tr ' ' '░')"
+  bar="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+  bar+="$(printf '%*s' "$((width - filled))" '' | tr ' ' '-')"
   printf '\r   %s[%s]%s %s/%s  %s' "$C_ORANGE" "$bar" "$C_RESET" "$current" "$total" "$label"
   [[ "$current" -eq "$total" ]] && printf '\n' || true
 }
 
 ui_box_start() {
   echo
-  printf '%s┌─ %s%s\n' "$C_GRAY" "$1" "$C_RESET"
+  printf '%s+-- %s%s\n' "$C_GRAY" "$1" "$C_RESET"
 }
 
 ui_box_end() {
-  printf '%s└────────────────────────────────────────%s\n' "$C_GRAY" "$C_RESET"
+  printf '%s+----------------------------------------%s\n' "$C_GRAY" "$C_RESET"
 }
