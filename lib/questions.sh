@@ -27,11 +27,16 @@ questionnaire_common_safety() {
 }
 
 ask_dns() {
+  detect_dns_manager
+  echo
+  # Live benchmark so the user sees which resolver is best HERE
+  dns_run_benchmark || true
+
   local labels=()
   local line
   while IFS= read -r line; do
     [[ -n "$line" ]] && labels+=("$line")
-  done < <(dns_preset_labels)
+  done < <(dns_preset_labels_with_bench)
 
   if ((${#labels[@]} == 0)); then
     ui_error "DNS preset list is empty"
@@ -39,7 +44,7 @@ ask_dns() {
   fi
 
   local choice=""
-  ui_menu choice "Choose DNS resolver" "${labels[@]}"
+  ui_menu choice "Choose DNS resolver (★ = fastest on this server)" "${labels[@]}"
   choice="$(trim "$choice")"
   if ! is_uint "$choice" || (( choice < 1 || choice > ${#DNS_PRESETS[@]} )); then
     ui_error "Invalid DNS selection: '${choice}'"
@@ -81,19 +86,27 @@ ask_dns() {
       SECUREBOX_ANSWERS[dns_primary]="$primary"
       SECUREBOX_ANSWERS[dns_secondary]="$secondary"
       ui_success "Selected ${label}"
-      ui_success "DNS set automatically: ${primary} / ${secondary}"
+      ui_success "DNS: ${primary} / ${secondary}"
       ;;
     *)
       if [[ -n "$primary" ]] && is_ipv4 "$primary"; then
         SECUREBOX_ANSWERS[dns_primary]="$primary"
         SECUREBOX_ANSWERS[dns_secondary]="$secondary"
-        ui_success "DNS set automatically: ${primary} / ${secondary}"
+        ui_success "DNS: ${primary} / ${secondary}"
       else
         ui_error "Unknown DNS preset id '${id}' — not applying"
         return 1
       fi
       ;;
   esac
+}
+
+ask_logs() {
+  if ui_confirm "Clean Ubuntu journal/logs + Docker logs to free disk?" "Y"; then
+    SECUREBOX_ANSWERS[do_logs]=yes
+  else
+    SECUREBOX_ANSWERS[do_logs]=no
+  fi
 }
 
 ask_mtu() {
@@ -304,6 +317,7 @@ review_answers() {
   if [[ -n "${SECUREBOX_ANSWERS[dns_primary]:-}" ]]; then
     dns_show="${dns_show} (${SECUREBOX_ANSWERS[dns_primary]}${SECUREBOX_ANSWERS[dns_secondary]:+ / ${SECUREBOX_ANSWERS[dns_secondary]}})"
   fi
+  ui_kv "Mode" "${SECUREBOX_ANSWERS[apply_mode]:-custom}"
   ui_kv "System update" "${SECUREBOX_ANSWERS[do_update]:-}"
   ui_kv "Time sync" "${SECUREBOX_ANSWERS[do_timesync]:-}"
   ui_kv "DNS" "$dns_show"
@@ -322,38 +336,119 @@ review_answers() {
   ui_kv "Fail2Ban" "${SECUREBOX_ANSWERS[enable_fail2ban]:-}"
   ui_kv "Unattended upgrades" "${SECUREBOX_ANSWERS[unattended]:-}"
   ui_kv "Disable unused svcs" "${SECUREBOX_ANSWERS[disable_unused]:-}"
+  ui_kv "Clean logs/disk" "${SECUREBOX_ANSWERS[do_logs]:-}"
   ui_box_end
 }
 
+# Full automatic profile for Apply All → option 1
+defaults_auto_all() {
+  detect_network_stack
+  detect_dns_manager
+  SECUREBOX_ANSWERS[apply_mode]=auto
+  SECUREBOX_ANSWERS[continue_on_error]=yes
+  SECUREBOX_ANSWERS[do_update]=yes
+  SECUREBOX_ANSWERS[do_timesync]=yes
+  SECUREBOX_ANSWERS[do_bbr]=yes
+  SECUREBOX_ANSWERS[do_logs]=yes
+
+  # DNS: benchmark and pick fastest preset for this server
+  ui_step "Auto: testing DNS resolvers for this location"
+  if dns_run_benchmark && dns_apply_best_from_benchmark; then
+    ui_success "Auto DNS → ${SECUREBOX_ANSWERS[dns_id]} (${SECUREBOX_ANSWERS[dns_primary]} / ${SECUREBOX_ANSWERS[dns_secondary]})"
+  else
+    SECUREBOX_ANSWERS[dns_choice]=6
+    SECUREBOX_ANSWERS[dns_id]=keep
+    ui_warn "DNS test inconclusive — keeping current DNS"
+  fi
+
+  # MTU: VPN-friendly recommendation
+  SECUREBOX_ANSWERS[mtu]="$(recommend_mtu)"
+
+  # SSH: harden but KEEP the server's current port
+  local cur
+  cur="$(_ssh_current_port 2>/dev/null || echo 22)"
+  SECUREBOX_ANSWERS[do_ssh]=yes
+  SECUREBOX_ANSWERS[ssh_current_port]="$cur"
+  SECUREBOX_ANSWERS[ssh_port]="$cur"
+  SECUREBOX_ANSWERS[ssh_wait_confirm]=no
+  SECUREBOX_ANSWERS[ssh_password_auth]=keep
+  SECUREBOX_ANSWERS[ssh_permit_root]=keep
+
+  # Safe security defaults (IPv6 left alone — too disruptive for auto)
+  SECUREBOX_ANSWERS[disable_ipv6]=no
+  SECUREBOX_ANSWERS[block_abuse]=yes
+  SECUREBOX_ANSWERS[ufw_enable]=yes
+  SECUREBOX_ANSWERS[ufw_reset]=no
+  SECUREBOX_ANSWERS[ufw_auto_discover]=yes
+  SECUREBOX_ANSWERS[ufw_ports]=""
+  SECUREBOX_ANSWERS[enable_fail2ban]=yes
+  SECUREBOX_ANSWERS[f2b_bantime]=1h
+  SECUREBOX_ANSWERS[f2b_findtime]=10m
+  SECUREBOX_ANSWERS[f2b_maxretry]=4
+  SECUREBOX_ANSWERS[unattended]=yes
+  SECUREBOX_ANSWERS[unattended_reboot]=no
+  SECUREBOX_ANSWERS[disable_unused]=yes
+  SECUREBOX_ANSWERS[disable_snapd]=no
+}
+
 questionnaire_all() {
-  # Fresh answers — never carry leftovers from earlier menu actions
   SECUREBOX_ANSWERS=()
   SECUREBOX_ANSWERS[continue_on_error]=yes
   ui_clear
-  ui_step "Questions first — only your yes answers will run"
-  ask_update
-  ask_timesync
-  ask_dns
-  ask_mtu
-  ask_bbr
-  ask_ssh
-  ask_ipv6
-  ask_abuse
-  ask_ufw
-  ask_fail2ban
-  ask_unattended
-  ask_services
-  review_answers
-  if ! ui_confirm "Proceed using ONLY these answers (nothing else will be forced)?" "Y"; then
-    ui_warn "Cancelled by user."
-    return 1
-  fi
-  return 0
+  ui_step "Apply All — how should we proceed?"
+  local mode
+  ui_menu mode "Apply All mode" \
+    "Automatic — I apply a full safe profile (SSH port stays as-is; best DNS auto-picked)" \
+    "Customize — ask me every option (current behavior)"
+  case "$mode" in
+    1)
+      defaults_auto_all
+      review_answers
+      if ! ui_confirm "Run AUTOMATIC Apply All with these choices?" "Y"; then
+        ui_warn "Cancelled by user."
+        return 1
+      fi
+      return 0
+      ;;
+    2)
+      SECUREBOX_ANSWERS[apply_mode]=custom
+      ui_step "Customize — only your yes answers will run"
+      ask_update
+      ask_timesync
+      ask_dns
+      ask_mtu
+      ask_bbr
+      ask_ssh
+      ask_ipv6
+      ask_abuse
+      ask_ufw
+      ask_fail2ban
+      ask_unattended
+      ask_services
+      ask_logs
+      review_answers
+      if ! ui_confirm "Proceed using ONLY these answers (nothing else will be forced)?" "Y"; then
+        ui_warn "Cancelled by user."
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      ui_warn "Cancelled."
+      return 1
+      ;;
+  esac
 }
 
 # Per-feature questionnaires (only what that feature needs)
 questionnaire_dns_only() { questionnaire_common_safety; ask_dns; review_answers; ui_confirm "Apply DNS now?" "Y"; }
 questionnaire_mtu_only() { questionnaire_common_safety; ask_mtu; review_answers; ui_confirm "Apply MTU now?" "Y"; }
+questionnaire_logs_only() {
+  questionnaire_common_safety
+  ask_logs
+  review_answers
+  answered_yes do_logs && ui_confirm "Clean logs now?" "Y"
+}
 questionnaire_ssh_only() {
   questionnaire_common_safety
   ask_ssh

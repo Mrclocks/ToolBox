@@ -28,13 +28,15 @@ source_modules() {
   # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/services.sh"
   # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/logs.sh"
+  # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/report.sh"
 }
 
 run_pipeline_all() {
   ui_box_start "Applying only your answers"
   local k
-  for k in dns_id dns_primary mtu ssh_port block_abuse ufw_enable enable_fail2ban disable_ipv6 unattended disable_unused do_update do_bbr do_ssh; do
+  for k in apply_mode dns_id dns_primary mtu ssh_port block_abuse ufw_enable enable_fail2ban disable_ipv6 unattended disable_unused do_update do_bbr do_ssh do_logs; do
     ui_kv "$k" "${SECUREBOX_ANSWERS[$k]:-(unset)}"
   done
   ui_box_end
@@ -52,6 +54,7 @@ run_pipeline_all() {
     module_fail2ban
     module_unattended
     module_services
+    module_logs
     module_report
   )
   local total="${#steps[@]}"
@@ -84,6 +87,7 @@ run_single() {
     ipv6) module_ipv6 ;;
     unattended) module_unattended ;;
     services) module_services ;;
+    logs) module_logs ;;
     report) module_report ;;
     *) ui_error "Unknown module: $name"; return 1 ;;
   esac

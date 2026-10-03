@@ -282,7 +282,8 @@ menu_loop() {
     printf '  %s11)%s IPv6 Disable\n' "$C_ORANGE" "$C_RESET"
     printf '  %s12)%s Unattended Upgrades\n' "$C_ORANGE" "$C_RESET"
     printf '  %s13)%s Disable Unused Services\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s14)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s14)%s Clean Logs (Ubuntu/Docker)\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s15)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
     ui_line 56 '-'
     local choice
@@ -366,6 +367,11 @@ menu_loop() {
         ui_pause
         ;;
       14)
+        ui_clear
+        questionnaire_logs_only && run_single logs && run_single report
+        ui_pause
+        ;;
+      15)
         ui_clear
         run_single report
         ui_pause

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6 — 2026-10-03
+
+### Added
+- Apply All → choose **Automatic** or **Customize**
+- Automatic: full safe profile, keep current SSH port, pick fastest DNS via live dig benchmark
+- DNS menu shows live latency ranking (★ BEST for this server)
+- Clean Logs module: journal vacuum, rotated `/var/log`, Docker JSON logs, apt cache
+
 ## 0.1.5 — 2026-10-03
 
 ### Fixed
