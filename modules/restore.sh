@@ -146,13 +146,17 @@ _restore_reload_services() {
   # sysctl
   sysctl --system >/dev/null 2>&1 || true
 
-  # DNS / network
+  # DNS / network — soft only (never hard-restart networkd; that can drop gateway)
   if have_cmd netplan; then
     netplan generate >/dev/null 2>&1 || true
-    netplan apply >/dev/null 2>&1 || true
+    # Skip applying netplan on restore — restored files take effect on next boot/reconnect;
+    # live interfaces already have addressing. Applying can flap NICs.
   fi
   if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
     systemctl restart systemd-resolved >/dev/null 2>&1 || true
+  fi
+  if have_cmd networkctl; then
+    networkctl reload >/dev/null 2>&1 || true
   fi
   if systemctl is-active --quiet NetworkManager 2>/dev/null; then
     systemctl reload NetworkManager >/dev/null 2>&1 || true

@@ -92,11 +92,8 @@ module_bbr() {
     return 0
   fi
 
-  # Best-effort: set fq on default iface
-  if [[ -n "${NET_DEFAULT_IFACE:-}" ]] && have_cmd tc; then
-    tc qdisc replace dev "$NET_DEFAULT_IFACE" root fq 2>/dev/null || true
-  fi
-
+  # Do NOT replace root qdisc live — can disrupt shaping/VPN bridges.
+  # default_qdisc=fq via sysctl is enough for new connections/interfaces.
   module_ok "bbr"
   ui_success "BBR active (${active_cc} + ${active_qdisc}) with VPN sysctl profile"
 }

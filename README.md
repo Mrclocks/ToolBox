@@ -25,7 +25,8 @@ sudo mrclock
 - 🧹 پاک‌سازی لاگ Ubuntu / Docker
 - ♻️ بازگردانی تغییرات قبلی (DNS/MTU/SSH/UFW/…)
 
-گزینه ۱: **Automatic کم‌ریسک** (فقط UFW و IPv6 پرسیده می‌شود؛ DNS/MTU دست نخورده) یا **Customize**.
+گزینه ۱: **Automatic کم‌ریسک** (فقط UFW و IPv6؛ DNS/MTU دست‌نخورده) یا **Customize**.
+MTU/DNS هرگز IP یا gateway را بازنویسی نمی‌کنند.
 
 ## ⚠️ نکته
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.10 — 2026-10-03
+
+### Safety audit — never touch addressing/gateway
+- MTU: **never** write netplan `ethernets:` stubs or networkd `.network` files
+- MTU persistence only via systemd `.link` + live `ip link set`
+- DNS: **never** write netplan DNS stubs; no `Domains=~.`; keep FallbackDNS; rollback on failure
+- NetworkManager: prefer `device reapply` over `connection up` (no NIC flap)
+- BBR: removed live `tc qdisc replace` on default iface
+- Heal on startup removes dangerous `.network` + old `99-securebox-{mtu,dns}.yaml`
+- Restore: no `netplan apply` / hard networkd restart
+
 ## 0.1.9 — 2026-10-03
 
 ### Fixed / Safety

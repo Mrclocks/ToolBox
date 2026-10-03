@@ -412,8 +412,10 @@ main() {
   if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
     _abuse_repair_outbound
   fi
-  # Auto-heal older MTU drop-ins that could steal DHCP and kill networking
-  if declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
+  # Auto-heal ANY artifacts that can steal DHCP/gateway
+  if declare -F heal_network_safety >/dev/null 2>&1; then
+    heal_network_safety
+  elif declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
     heal_networkd_mtu_dropins
   fi
 
