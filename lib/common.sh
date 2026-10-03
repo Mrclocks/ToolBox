@@ -4,9 +4,12 @@
 
 set -o pipefail
 
-SECUREBOX_VERSION="0.1.3"
 SECUREBOX_NAME="MrClock"
 SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -r "${SECUREBOX_ROOT}/VERSION" ]]; then
+  SECUREBOX_VERSION="$(tr -d '[:space:]' <"${SECUREBOX_ROOT}/VERSION")"
+fi
+SECUREBOX_VERSION="${SECUREBOX_VERSION:-0.1.4}"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
 SECUREBOX_BACKUP_ROOT="${SECUREBOX_BACKUP_ROOT:-/var/backups/securebox}"
 SECUREBOX_LOG_DIR="${SECUREBOX_LOG_DIR:-/var/log/securebox}"
@@ -16,6 +19,7 @@ SECUREBOX_LOG="${SECUREBOX_LOG_DIR}/run-${SECUREBOX_RUN_ID}.log"
 SECUREBOX_FAILED_MODULES=()
 SECUREBOX_OK_MODULES=()
 SECUREBOX_SKIPPED_MODULES=()
+SECUREBOX_APT_UPDATED=0
 
 export SECUREBOX_VERSION SECUREBOX_NAME SECUREBOX_ROOT SECUREBOX_DATA
 export SECUREBOX_BACKUP_ROOT SECUREBOX_LOG_DIR SECUREBOX_STATE_DIR
@@ -33,9 +37,17 @@ log() {
 
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "SecureBox must be run as root. Try: sudo bash install.sh" >&2
+    echo "MrClock must be run as root. Try: sudo mrclock" >&2
     exit 1
   fi
+}
+
+# True when we can prompt the operator (TTY or /dev/tty).
+have_tty() {
+  [[ -t 0 ]] && return 0
+  { exec 3</dev/tty; } 2>/dev/null || return 1
+  exec 3<&-
+  return 0
 }
 
 have_cmd() {
@@ -151,7 +163,7 @@ write_sysctl_dropin() {
   mkdir -p "$(dirname "$file")"
   backup_file "$file"
   {
-    echo "# Managed by SecureBox ${SECUREBOX_VERSION} (${SECUREBOX_RUN_ID})"
+    echo "# Managed by MrClock ${SECUREBOX_VERSION} (${SECUREBOX_RUN_ID})"
     echo "# Do not edit by hand unless you know what you are doing."
     printf '%s\n' "$@"
   } >"$file"
@@ -175,7 +187,15 @@ module_skip() {
 
 apt_update_safe() {
   export DEBIAN_FRONTEND=noninteractive
-  retry_cmd 3 3 apt-get update -y
+  # Once per run — Apply All calls many modules that install packages
+  if [[ "${SECUREBOX_APT_UPDATED:-0}" == "1" ]]; then
+    return 0
+  fi
+  if retry_cmd 3 3 apt-get update -y; then
+    SECUREBOX_APT_UPDATED=1
+    return 0
+  fi
+  return 1
 }
 
 apt_install_safe() {
@@ -250,8 +270,12 @@ confirm_continue_on_error() {
   local module="$1"
   local err="$2"
   ui_error "${module}: ${err}"
-  ui_warn "SecureBox will continue with remaining tasks when possible."
+  ui_warn "MrClock will continue with remaining tasks when possible."
   if [[ -n "${SECUREBOX_ANSWERS[continue_on_error]:-}" ]] && is_true "${SECUREBOX_ANSWERS[continue_on_error]}"; then
+    return 0
+  fi
+  if ! have_tty; then
+    ui_warn "No TTY — continuing automatically."
     return 0
   fi
   if ui_confirm "Continue despite this error?" "Y"; then

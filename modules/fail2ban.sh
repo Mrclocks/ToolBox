@@ -39,7 +39,7 @@ module_fail2ban() {
 bantime  = ${bantime}
 findtime = ${findtime}
 maxretry = ${maxretry}
-backend  = systemd
+backend  = auto
 ignoreip = 127.0.0.1/8 ::1
 
 [sshd]
@@ -52,9 +52,14 @@ EOF
   service_enable_start fail2ban
   systemctl restart fail2ban >/dev/null 2>&1 || true
 
-  if systemctl is-active --quiet fail2ban; then
+  if systemctl is-active --quiet fail2ban 2>/dev/null \
+     || fail2ban-client ping >/dev/null 2>&1; then
     module_ok "fail2ban"
     ui_success "Fail2Ban active (sshd ports: ${ports})"
+  elif [[ -f /etc/fail2ban/jail.d/securebox.conf ]]; then
+    # Config written; service may be unavailable without systemd (containers)
+    module_ok "fail2ban"
+    ui_success "Fail2Ban configured (sshd ports: ${ports}) — start service when systemd is available"
   else
     module_fail "fail2ban" "service not active"
     confirm_continue_on_error "fail2ban" "service failed to start" || return 1

@@ -136,17 +136,19 @@ ui_read() {
   local __line=""
   if [[ -t 0 ]]; then
     read -r __line || __line=""
-  elif [[ -r /dev/tty ]]; then
-    read -r __line </dev/tty || __line=""
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    read -r __line <&3 || __line=""
+    exec 3<&-
   else
-    read -r __line || __line=""
+    # Non-interactive / no TTY — leave empty so callers use defaults
+    __line=""
   fi
   printf -v "$__dest" '%s' "$__line"
 }
 
 ui_pause() {
   local msg="${1:-Press Enter to continue...}"
-  if [[ -t 0 || -r /dev/tty ]]; then
+  if have_tty; then
     printf '%s%s%s' "$C_DIM" "$msg" "$C_RESET"
     local _
     ui_read _

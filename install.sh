@@ -240,10 +240,16 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --one-click) SECUREBOX_MODE=one_click; shift ;;
-      --ssh-port) SECUREBOX_CLI_SSH_PORT="$2"; shift 2 ;;
+      --ssh-port)
+        [[ -n "${2-}" ]] || { ui_error "--ssh-port requires a value"; exit 1; }
+        SECUREBOX_CLI_SSH_PORT="$2"; shift 2 ;;
       --disable-ipv6) SECUREBOX_CLI_DISABLE_IPV6=yes; shift ;;
-      --mtu) SECUREBOX_CLI_MTU="$2"; shift 2 ;;
-      --dns) SECUREBOX_CLI_DNS="$2"; shift 2 ;;
+      --mtu)
+        [[ -n "${2-}" ]] || { ui_error "--mtu requires a value"; exit 1; }
+        SECUREBOX_CLI_MTU="$2"; shift 2 ;;
+      --dns)
+        [[ -n "${2-}" ]] || { ui_error "--dns requires a value"; exit 1; }
+        SECUREBOX_CLI_DNS="$2"; shift 2 ;;
       --no-abuse-block) SECUREBOX_CLI_BLOCK_ABUSE=no; shift ;;
       --block-abuse) SECUREBOX_CLI_BLOCK_ABUSE=yes; shift ;;
       --no-ufw) SECUREBOX_CLI_UFW_ENABLE=no; shift ;;
@@ -330,7 +336,12 @@ menu_loop() {
         ;;
       8)
         ui_clear
-        questionnaire_ufw_only && run_single ufw && run_single report
+        if questionnaire_ufw_only; then
+          run_single ufw
+          # IPv6 was asked during UFW questionnaire — honor it
+          run_single ipv6
+          run_single report
+        fi
         ui_pause
         ;;
       9)
@@ -376,6 +387,13 @@ menu_loop() {
 }
 
 main() {
+  # Allow --help without root
+  for __arg in "$@"; do
+    case "$__arg" in
+      --help|-h) usage; exit 0 ;;
+    esac
+  done
+
   require_root
   parse_args "$@"
   assert_supported_os

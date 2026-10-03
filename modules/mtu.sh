@@ -9,15 +9,16 @@ module_mtu() {
   local iface="${NET_DEFAULT_IFACE}"
   local mtu="${SECUREBOX_ANSWERS[mtu]:-}"
 
-  if [[ -z "$iface" ]]; then
-    module_fail "mtu" "could not detect default interface"
-    confirm_continue_on_error "mtu" "no default interface" || return 1
+  # Honor keep / unset before requiring a detected interface
+  if [[ -z "$mtu" || "$mtu" == "keep" ]]; then
+    module_skip "mtu" "kept current MTU"
+    ui_info "MTU unchanged${iface:+ on ${iface}} (${NET_DEFAULT_MTU:-unknown})"
     return 0
   fi
 
-  if [[ -z "$mtu" || "$mtu" == "keep" ]]; then
-    module_skip "mtu" "kept current MTU"
-    ui_info "MTU unchanged on ${iface} (${NET_DEFAULT_MTU:-unknown})"
+  if [[ -z "$iface" ]]; then
+    module_fail "mtu" "could not detect default interface"
+    confirm_continue_on_error "mtu" "no default interface" || return 1
     return 0
   fi
 

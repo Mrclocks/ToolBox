@@ -286,6 +286,8 @@ review_answers() {
 }
 
 questionnaire_all() {
+  # Fresh answers — never carry leftovers from earlier menu actions
+  SECUREBOX_ANSWERS=()
   SECUREBOX_ANSWERS[continue_on_error]=yes
   ui_clear
   ui_step "Questions first — then only your answers will be applied"

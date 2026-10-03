@@ -70,7 +70,13 @@ _abuse_apply_nft() {
   nft add rule inet securebox input ip saddr @abuse4 drop
 
   mkdir -p /etc/nftables.d
-  nft list table inet securebox > /etc/nftables.d/securebox-abuse.nft
+  {
+    echo '#!/usr/sbin/nft -f'
+    echo '# Managed by MrClock — safe reload on boot'
+    echo 'table inet securebox'
+    echo 'delete table inet securebox'
+    nft list table inet securebox
+  } >/etc/nftables.d/securebox-abuse.nft
   if [[ -f /etc/nftables.conf ]]; then
     backup_file /etc/nftables.conf
     if ! grep -q 'securebox-abuse.nft' /etc/nftables.conf; then
@@ -108,7 +114,7 @@ _abuse_harden_services() {
       fi
     fi
   done
-  if have_cmd ufw; then
+  if have_cmd ufw && ufw status 2>/dev/null | grep -qi 'Status: active'; then
     ufw deny 25/tcp >/dev/null 2>&1 || true
     ufw deny 1900/udp >/dev/null 2>&1 || true
     ufw deny 11211/tcp >/dev/null 2>&1 || true
@@ -150,7 +156,7 @@ module_abuse() {
 
   # STRICT: never block unless user explicitly said yes
   if ! require_answer_yes block_abuse abuse "user did not enable abuse IP blocking"; then
-    ui_info "Abuse blocking disabled by your answer — removing any previous SecureBox abuse rules."
+    ui_info "Abuse blocking disabled by your answer — removing any previous MrClock abuse rules."
     _abuse_remove_all
     module_skip "abuse" "block_abuse!=yes (answer='${SECUREBOX_ANSWERS[block_abuse]:-}')"
     return 0

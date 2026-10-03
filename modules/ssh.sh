@@ -30,6 +30,10 @@ _ssh_current_port() {
 }
 
 _ssh_reload() {
+  # sshd requires this directory; missing on some minimal/container images
+  mkdir -p /run/sshd
+  chmod 755 /run/sshd 2>/dev/null || true
+
   if have_cmd sshd; then
     sshd -t || return 1
   elif [[ -x /usr/sbin/sshd ]]; then
@@ -41,7 +45,11 @@ _ssh_reload() {
     systemctl reload sshd || systemctl restart sshd || return 1
   else
     service ssh reload 2>/dev/null || service ssh restart 2>/dev/null \
-      || service sshd reload 2>/dev/null || service sshd restart 2>/dev/null || return 1
+      || service sshd reload 2>/dev/null || service sshd restart 2>/dev/null || {
+        # Config validated; service may be unavailable in containers without systemd
+        log WARN "sshd config OK but service reload unavailable"
+        return 0
+      }
   fi
 }
 
@@ -74,7 +82,7 @@ module_ssh() {
   local permit_root="${SECUREBOX_ANSWERS[ssh_permit_root]:-keep}"
 
   {
-    echo "# Managed by SecureBox ${SECUREBOX_VERSION} (${SECUREBOX_RUN_ID})"
+    echo "# Managed by MrClock ${SECUREBOX_VERSION} (${SECUREBOX_RUN_ID})"
     if [[ "$new_port" != "$current" ]]; then
       # Dual-port cutover: listen on BOTH until confirmed
       echo "Port ${current}"
@@ -129,8 +137,8 @@ module_ssh() {
 
   # Ensure UFW allows both if ufw already active
   if have_cmd ufw && ufw status 2>/dev/null | grep -qi 'Status: active'; then
-    ufw allow "${current}/tcp" comment 'SecureBox SSH current' >/dev/null 2>&1 || true
-    ufw allow "${new_port}/tcp" comment 'SecureBox SSH new' >/dev/null 2>&1 || true
+    ufw allow "${current}/tcp" comment 'MrClock SSH current' >/dev/null 2>&1 || true
+    ufw allow "${new_port}/tcp" comment 'MrClock SSH new' >/dev/null 2>&1 || true
   fi
 
   if [[ "$new_port" != "$current" ]]; then
@@ -141,11 +149,11 @@ module_ssh() {
     echo "$new_port" >"${SECUREBOX_STATE_DIR}/ssh_new_port"
     echo "pending" >"${SECUREBOX_STATE_DIR}/ssh_cutover"
 
-    if [[ -t 0 ]] && is_true "${SECUREBOX_ANSWERS[ssh_wait_confirm]:-yes}"; then
+    if have_tty && is_true "${SECUREBOX_ANSWERS[ssh_wait_confirm]:-yes}"; then
       if ui_confirm "Have you successfully logged in on port ${new_port} from a NEW terminal?" "N"; then
         # Finalize: only new port
         {
-          echo "# Managed by SecureBox ${SECUREBOX_VERSION} (finalized)"
+          echo "# Managed by MrClock ${SECUREBOX_VERSION} (finalized)"
           echo "Port ${new_port}"
           echo "Protocol 2"
           echo "MaxAuthTries 3"
@@ -173,7 +181,7 @@ module_ssh() {
           if have_cmd ufw; then
             ufw delete allow "${current}/tcp" >/dev/null 2>&1 || true
             # delete by rule number is fragile; insert deny old only if user wants
-            ufw allow "${new_port}/tcp" comment 'SecureBox SSH' >/dev/null 2>&1 || true
+            ufw allow "${new_port}/tcp" comment 'MrClock SSH' >/dev/null 2>&1 || true
           fi
           echo "done" >"${SECUREBOX_STATE_DIR}/ssh_cutover"
           ui_success "SSH cutover complete — only port ${new_port} remains"

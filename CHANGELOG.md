@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.4 — 2026-10-03
+
+### Fixed
+- MTU `keep` no longer fails when default interface is missing
+- SSH cutover confirm works after `curl | bash` (uses `/dev/tty`, not only stdin)
+- `--help` works without root
+- Apply All clears stale answers from earlier menu actions
+- UFW menu also applies IPv6 answer when requested
+- Safer CLI arg parsing when values are missing
+- nftables abuse rules reload cleanly on boot
+- Fail2Ban backend set to `auto` for wider compatibility
+- `ui_read` / error continue no longer break in non-TTY environments
+
+### Improved
+- Version read from `VERSION` file
+- `apt-get update` runs once per session (faster Apply All)
+- Branding messages say MrClock
+
 ## 0.1.3 — 2026-10-02
 
 ### Fixed

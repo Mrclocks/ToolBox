@@ -101,7 +101,7 @@ apply_persistent_mtu() {
       fi
       backup_file "$file"
       cat >"$file" <<EOF
-# Managed by SecureBox ${SECUREBOX_VERSION}
+# Managed by MrClock ${SECUREBOX_VERSION}
 network:
   version: 2
   ethernets:
@@ -128,7 +128,7 @@ EOF
       local dropin="/etc/systemd/network/10-securebox-${iface}.network"
       backup_file "$dropin"
       cat >"$dropin" <<EOF
-# Managed by SecureBox ${SECUREBOX_VERSION}
+# Managed by MrClock ${SECUREBOX_VERSION}
 [Match]
 Name=${iface}
 
@@ -158,7 +158,7 @@ apply_dns_servers() {
       mkdir -p /etc/systemd/resolved.conf.d
       backup_file "$conf"
       {
-        echo "# Managed by SecureBox ${SECUREBOX_VERSION}"
+        echo "# Managed by MrClock ${SECUREBOX_VERSION}"
         echo "[Resolve]"
         echo "DNS=${servers[*]}"
         echo "FallbackDNS="
@@ -193,7 +193,7 @@ apply_dns_servers() {
         local dns_yaml
         dns_yaml="$(printf '"%s", ' "${servers[@]}" | sed 's/, $//')"
         cat >"$file" <<EOF
-# Managed by SecureBox ${SECUREBOX_VERSION}
+# Managed by MrClock ${SECUREBOX_VERSION}
 network:
   version: 2
   ethernets:
@@ -210,7 +210,7 @@ EOF
       else
         backup_file /etc/resolv.conf
         {
-          echo "# Managed by SecureBox ${SECUREBOX_VERSION}"
+          echo "# Managed by MrClock ${SECUREBOX_VERSION}"
           for s in "${servers[@]}"; do
             echo "nameserver $s"
           done
