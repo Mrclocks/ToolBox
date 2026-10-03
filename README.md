@@ -24,7 +24,7 @@ sudo mrclock
 - 🔒 خاموش کردن IPv6 *(اختیاری)*
 - 🧹 پاک‌سازی لاگ Ubuntu / Docker
 
-گزینه ۱: **Automatic** یا **Customize** — فقط با جواب خودت.
+گزینه ۱: **Automatic** (فقط UFW و IPv6 پرسیده می‌شود) یا **Customize**.
 
 ## ⚠️ نکته
 

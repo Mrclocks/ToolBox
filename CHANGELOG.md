@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7 — 2026-10-03
+
+### Changed
+- Automatic Apply All now **asks only UFW + IPv6** (cannot be safely forced); everything else stays automatic
+
 ## 0.1.6 — 2026-10-03
 
 ### Added

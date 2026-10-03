@@ -340,7 +340,7 @@ review_answers() {
   ui_box_end
 }
 
-# Full automatic profile for Apply All → option 1
+# Automatic profile for Apply All — UFW & IPv6 are asked separately (not safe to force)
 defaults_auto_all() {
   detect_network_stack
   detect_dns_manager
@@ -374,13 +374,14 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[ssh_password_auth]=keep
   SECUREBOX_ANSWERS[ssh_permit_root]=keep
 
-  # Safe security defaults (IPv6 left alone — too disruptive for auto)
+  # These need a human decision — asked right after by questionnaire_all
   SECUREBOX_ANSWERS[disable_ipv6]=no
-  SECUREBOX_ANSWERS[block_abuse]=yes
-  SECUREBOX_ANSWERS[ufw_enable]=yes
+  SECUREBOX_ANSWERS[ufw_enable]=no
   SECUREBOX_ANSWERS[ufw_reset]=no
-  SECUREBOX_ANSWERS[ufw_auto_discover]=yes
+  SECUREBOX_ANSWERS[ufw_auto_discover]=no
   SECUREBOX_ANSWERS[ufw_ports]=""
+
+  SECUREBOX_ANSWERS[block_abuse]=yes
   SECUREBOX_ANSWERS[enable_fail2ban]=yes
   SECUREBOX_ANSWERS[f2b_bantime]=1h
   SECUREBOX_ANSWERS[f2b_findtime]=10m
@@ -398,11 +399,14 @@ questionnaire_all() {
   ui_step "Apply All — how should we proceed?"
   local mode
   ui_menu mode "Apply All mode" \
-    "Automatic — I apply a full safe profile (SSH port stays as-is; best DNS auto-picked)" \
-    "Customize — ask me every option (current behavior)"
+    "Automatic — full profile (only UFW & IPv6 will be asked; SSH port stays as-is)" \
+    "Customize — ask me every option"
   case "$mode" in
     1)
       defaults_auto_all
+      ui_step "Automatic needs two decisions (cannot be guessed safely)"
+      ask_ipv6
+      ask_ufw
       review_answers
       if ! ui_confirm "Run AUTOMATIC Apply All with these choices?" "Y"; then
         ui_warn "Cancelled by user."
