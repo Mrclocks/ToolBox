@@ -125,14 +125,50 @@ ask_mtu() {
   esac
 }
 
+ask_update() {
+  if ui_confirm "Run system update & upgrade?" "Y"; then
+    SECUREBOX_ANSWERS[do_update]=yes
+  else
+    SECUREBOX_ANSWERS[do_update]=no
+  fi
+}
+
+ask_timesync() {
+  if ui_confirm "Enable chrony time sync?" "Y"; then
+    SECUREBOX_ANSWERS[do_timesync]=yes
+  else
+    SECUREBOX_ANSWERS[do_timesync]=no
+  fi
+}
+
+ask_bbr() {
+  if ui_confirm "Apply BBR + network tuning?" "Y"; then
+    SECUREBOX_ANSWERS[do_bbr]=yes
+  else
+    SECUREBOX_ANSWERS[do_bbr]=no
+  fi
+}
+
 ask_ssh() {
   local current
   current="$(_ssh_current_port 2>/dev/null || echo 22)"
   SECUREBOX_ANSWERS[ssh_current_port]="$current"
+  SECUREBOX_ANSWERS[ssh_port]="$current"
+
+  echo
+  if ! ui_confirm "Configure SSH port & hardening?" "Y"; then
+    SECUREBOX_ANSWERS[do_ssh]=no
+    SECUREBOX_ANSWERS[ssh_password_auth]=keep
+    SECUREBOX_ANSWERS[ssh_permit_root]=keep
+    SECUREBOX_ANSWERS[ssh_wait_confirm]=no
+    ui_info "SSH left unchanged"
+    return 0
+  fi
+  SECUREBOX_ANSWERS[do_ssh]=yes
+
   local suggestion
   suggestion="$(recommend_ssh_port)"
 
-  echo
   ui_info "Current SSH port: ${current}"
   local choice
   ui_menu choice "SSH port action" \
@@ -268,8 +304,12 @@ review_answers() {
   if [[ -n "${SECUREBOX_ANSWERS[dns_primary]:-}" ]]; then
     dns_show="${dns_show} (${SECUREBOX_ANSWERS[dns_primary]}${SECUREBOX_ANSWERS[dns_secondary]:+ / ${SECUREBOX_ANSWERS[dns_secondary]}})"
   fi
+  ui_kv "System update" "${SECUREBOX_ANSWERS[do_update]:-}"
+  ui_kv "Time sync" "${SECUREBOX_ANSWERS[do_timesync]:-}"
   ui_kv "DNS" "$dns_show"
   ui_kv "MTU" "${SECUREBOX_ANSWERS[mtu]:-}"
+  ui_kv "BBR tuning" "${SECUREBOX_ANSWERS[do_bbr]:-}"
+  ui_kv "SSH changes" "${SECUREBOX_ANSWERS[do_ssh]:-}"
   ui_kv "SSH port" "${SECUREBOX_ANSWERS[ssh_current_port]:-?} → ${SECUREBOX_ANSWERS[ssh_port]:-?}"
   ui_kv "SSH password" "${SECUREBOX_ANSWERS[ssh_password_auth]:-}"
   ui_kv "Root login" "${SECUREBOX_ANSWERS[ssh_permit_root]:-}"
@@ -290,9 +330,12 @@ questionnaire_all() {
   SECUREBOX_ANSWERS=()
   SECUREBOX_ANSWERS[continue_on_error]=yes
   ui_clear
-  ui_step "Questions first — then only your answers will be applied"
+  ui_step "Questions first — only your yes answers will run"
+  ask_update
+  ask_timesync
   ask_dns
   ask_mtu
+  ask_bbr
   ask_ssh
   ask_ipv6
   ask_abuse
@@ -305,11 +348,6 @@ questionnaire_all() {
     ui_warn "Cancelled by user."
     return 1
   fi
-  # Core Apply All steps — user chose Apply All, so these are intentional
-  SECUREBOX_ANSWERS[do_update]=yes
-  SECUREBOX_ANSWERS[do_timesync]=yes
-  SECUREBOX_ANSWERS[do_bbr]=yes
-  SECUREBOX_ANSWERS[do_ssh]=yes
   return 0
 }
 
@@ -320,11 +358,12 @@ questionnaire_ssh_only() {
   questionnaire_common_safety
   ask_ssh
   review_answers
-  if ui_confirm "Apply SSH changes now?" "Y"; then
-    SECUREBOX_ANSWERS[do_ssh]=yes
-    return 0
+  # ask_ssh already sets do_ssh from the user's yes/no
+  if answered_yes do_ssh; then
+    ui_confirm "Apply SSH changes now?" "Y"
+  else
+    return 1
   fi
-  return 1
 }
 questionnaire_ufw_only() {
   questionnaire_common_safety
@@ -349,17 +388,19 @@ questionnaire_fail2ban_only() {
 }
 questionnaire_bbr_only() {
   questionnaire_common_safety
-  if ui_confirm "Apply BBR + network tuning now?" "Y"; then
-    SECUREBOX_ANSWERS[do_bbr]=yes
-    return 0
-  fi
-  return 1
+  ask_bbr
+  review_answers
+  answered_yes do_bbr && ui_confirm "Apply BBR now?" "Y"
 }
 questionnaire_update_only() {
   questionnaire_common_safety
-  if ui_confirm "Run system update & upgrade now?" "Y"; then
-    SECUREBOX_ANSWERS[do_update]=yes
-    return 0
-  fi
-  return 1
+  ask_update
+  review_answers
+  answered_yes do_update && ui_confirm "Run update now?" "Y"
+}
+questionnaire_timesync_only() {
+  questionnaire_common_safety
+  ask_timesync
+  review_answers
+  answered_yes do_timesync && ui_confirm "Apply time sync now?" "Y"
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 — 2026-10-03
+
+### Fixed
+- Apply All (option 1) asks for **every** step — nothing is forced
+- Update / chrony / BBR / SSH now require explicit yes like the rest
+
 ## 0.1.4 — 2026-10-03
 
 ### Fixed

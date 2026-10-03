@@ -307,11 +307,7 @@ menu_loop() {
         ;;
       3)
         ui_clear
-        questionnaire_common_safety
-        if ui_confirm "Enable chrony time sync?" "Y"; then
-          SECUREBOX_ANSWERS[do_timesync]=yes
-          run_single timesync && run_single report
-        fi
+        questionnaire_timesync_only && run_single timesync && run_single report
         ui_pause
         ;;
       4)
