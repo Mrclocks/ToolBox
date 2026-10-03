@@ -82,6 +82,23 @@ print_network_facts() {
   ui_box_end
 }
 
+# Remove dangerous MrClock networkd drop-ins that stole DHCP (older versions)
+heal_networkd_mtu_dropins() {
+  local f
+  for f in /etc/systemd/network/10-securebox-*.network; do
+    [[ -e "$f" ]] || continue
+    # If file has no [Network] section, it can claim the NIC without an address
+    if ! grep -q '^\[Network\]' "$f" 2>/dev/null; then
+      backup_file "$f"
+      rm -f "$f"
+      ui_warn "Removed risky networkd drop-in (could kill DHCP): $(basename "$f")"
+      if systemctl is-active --quiet systemd-networkd 2>/dev/null; then
+        systemctl restart systemd-networkd >/dev/null 2>&1 || true
+      fi
+    fi
+  done
+}
+
 # Apply persistent MTU on the default interface according to detected stack
 apply_persistent_mtu() {
   local iface="$1"
@@ -124,20 +141,22 @@ EOF
       ip link set dev "$iface" mtu "$mtu" || true
       ;;
     networkd|unknown|ifupdown)
+      # IMPORTANT: do NOT write a .network file with only MTU — that can steal the
+      # interface from DHCP/cloud-init and kill all connectivity.
+      # Use a .link file (udev/networkd) which sets MTU without taking over IP config.
       mkdir -p /etc/systemd/network
-      local dropin="/etc/systemd/network/10-securebox-${iface}.network"
-      backup_file "$dropin"
-      cat >"$dropin" <<EOF
+      local linkfile="/etc/systemd/network/10-securebox-${iface}.link"
+      backup_file "$linkfile"
+      cat >"$linkfile" <<EOF
 # Managed by MrClock ${SECUREBOX_VERSION}
+# MTU only — does not override DHCP/addressing
 [Match]
-Name=${iface}
+OriginalName=${iface}
 
 [Link]
 MTUBytes=${mtu}
 EOF
-      if systemctl is-enabled --quiet systemd-networkd 2>/dev/null || systemctl is-active --quiet systemd-networkd 2>/dev/null; then
-        systemctl restart systemd-networkd >/dev/null 2>&1 || true
-      fi
+      # Live apply now; .link applies on next rename/boot — live set covers current session
       ip link set dev "$iface" mtu "$mtu" || true
       ;;
   esac

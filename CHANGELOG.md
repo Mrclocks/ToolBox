@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9 — 2026-10-03
+
+### Fixed / Safety
+- **Automatic** is now low-risk: keeps DNS + MTU, disables abuse block by default
+- MTU on networkd no longer writes a `.network` file that can steal DHCP and kill connectivity (uses `.link` instead)
+- `rp_filter` softened from strict(1) to loose(2) for VPS/VPN
+- Startup auto-heals old dangerous `10-securebox-*.network` drop-ins
+
 ## 0.1.8 — 2026-10-03
 
 ### Added

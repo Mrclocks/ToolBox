@@ -340,31 +340,34 @@ review_answers() {
   ui_box_end
 }
 
-# Automatic profile for Apply All — UFW & IPv6 are asked separately (not safe to force)
+# Automatic profile — LOW RISK only. Anything that can cut network stays off or asked.
 defaults_auto_all() {
   detect_network_stack
   detect_dns_manager
   SECUREBOX_ANSWERS[apply_mode]=auto
   SECUREBOX_ANSWERS[continue_on_error]=yes
+
+  # Safe always-on
   SECUREBOX_ANSWERS[do_update]=yes
   SECUREBOX_ANSWERS[do_timesync]=yes
   SECUREBOX_ANSWERS[do_bbr]=yes
   SECUREBOX_ANSWERS[do_logs]=yes
+  SECUREBOX_ANSWERS[enable_fail2ban]=yes
+  SECUREBOX_ANSWERS[f2b_bantime]=1h
+  SECUREBOX_ANSWERS[f2b_findtime]=10m
+  SECUREBOX_ANSWERS[f2b_maxretry]=4
+  SECUREBOX_ANSWERS[unattended]=yes
+  SECUREBOX_ANSWERS[unattended_reboot]=no
+  SECUREBOX_ANSWERS[disable_unused]=yes
+  SECUREBOX_ANSWERS[disable_snapd]=no
 
-  # DNS: benchmark and pick fastest preset for this server
-  ui_step "Auto: testing DNS resolvers for this location"
-  if dns_run_benchmark && dns_apply_best_from_benchmark; then
-    ui_success "Auto DNS → ${SECUREBOX_ANSWERS[dns_id]} (${SECUREBOX_ANSWERS[dns_primary]} / ${SECUREBOX_ANSWERS[dns_secondary]})"
-  else
-    SECUREBOX_ANSWERS[dns_choice]=6
-    SECUREBOX_ANSWERS[dns_id]=keep
-    ui_warn "DNS test inconclusive — keeping current DNS"
-  fi
+  # Keep current DNS/MTU — changing them has cut connectivity on some VPS
+  SECUREBOX_ANSWERS[dns_choice]=6
+  SECUREBOX_ANSWERS[dns_id]=keep
+  SECUREBOX_ANSWERS[mtu]=keep
+  ui_info "Auto: keeping current DNS and MTU (safest for connectivity)"
 
-  # MTU: VPN-friendly recommendation
-  SECUREBOX_ANSWERS[mtu]="$(recommend_mtu)"
-
-  # SSH: harden but KEEP the server's current port
+  # SSH harden, port unchanged
   local cur
   cur="$(_ssh_current_port 2>/dev/null || echo 22)"
   SECUREBOX_ANSWERS[do_ssh]=yes
@@ -374,22 +377,13 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[ssh_password_auth]=keep
   SECUREBOX_ANSWERS[ssh_permit_root]=keep
 
-  # These need a human decision — asked right after by questionnaire_all
+  # High-risk — NEVER auto-enable (UFW/IPv6 still asked below)
+  SECUREBOX_ANSWERS[block_abuse]=no
   SECUREBOX_ANSWERS[disable_ipv6]=no
   SECUREBOX_ANSWERS[ufw_enable]=no
   SECUREBOX_ANSWERS[ufw_reset]=no
   SECUREBOX_ANSWERS[ufw_auto_discover]=no
   SECUREBOX_ANSWERS[ufw_ports]=""
-
-  SECUREBOX_ANSWERS[block_abuse]=yes
-  SECUREBOX_ANSWERS[enable_fail2ban]=yes
-  SECUREBOX_ANSWERS[f2b_bantime]=1h
-  SECUREBOX_ANSWERS[f2b_findtime]=10m
-  SECUREBOX_ANSWERS[f2b_maxretry]=4
-  SECUREBOX_ANSWERS[unattended]=yes
-  SECUREBOX_ANSWERS[unattended_reboot]=no
-  SECUREBOX_ANSWERS[disable_unused]=yes
-  SECUREBOX_ANSWERS[disable_snapd]=no
 }
 
 questionnaire_all() {
@@ -399,16 +393,16 @@ questionnaire_all() {
   ui_step "Apply All — how should we proceed?"
   local mode
   ui_menu mode "Apply All mode" \
-    "Automatic — full profile (only UFW & IPv6 will be asked; SSH port stays as-is)" \
+    "Automatic — low-risk only (asks UFW & IPv6; keeps DNS/MTU/SSH port; no abuse block)" \
     "Customize — ask me every option"
   case "$mode" in
     1)
       defaults_auto_all
-      ui_step "Automatic needs two decisions (cannot be guessed safely)"
+      ui_step "Automatic needs two decisions (can cut access if wrong)"
       ask_ipv6
       ask_ufw
       review_answers
-      if ! ui_confirm "Run AUTOMATIC Apply All with these choices?" "Y"; then
+      if ! ui_confirm "Run LOW-RISK automatic Apply All with these choices?" "Y"; then
         ui_warn "Cancelled by user."
         return 1
       fi

@@ -54,9 +54,10 @@ module_bbr() {
     "net.ipv4.tcp_max_tw_buckets = 2000000" \
     "net.ipv4.tcp_notsent_lowat = 16384" \
     "" \
-    "# --- path / spoof hardening (VPN-safe) ---" \
-    "net.ipv4.conf.all.rp_filter = 1" \
-    "net.ipv4.conf.default.rp_filter = 1" \
+    "# --- path / spoof hardening (VPN/cloud safe) ---" \
+    "# rp_filter=2 (loose) — strict(1) breaks many VPS/floating-IP setups" \
+    "net.ipv4.conf.all.rp_filter = 2" \
+    "net.ipv4.conf.default.rp_filter = 2" \
     "net.ipv4.conf.all.accept_redirects = 0" \
     "net.ipv4.conf.default.accept_redirects = 0" \
     "net.ipv4.conf.all.send_redirects = 0" \

@@ -412,6 +412,10 @@ main() {
   if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
     _abuse_repair_outbound
   fi
+  # Auto-heal older MTU drop-ins that could steal DHCP and kill networking
+  if declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
+    heal_networkd_mtu_dropins
+  fi
 
   # Ensure local launcher exists for next run without curl
   if _securebox_have_tree "${SECUREBOX_ROOT}"; then

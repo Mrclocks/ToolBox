@@ -129,9 +129,9 @@ _restore_apply_legacy_tree() {
       RESTORE_COUNT_REMOVED=$((RESTORE_COUNT_REMOVED + 1))
     fi
   done
-  # iface-specific networkd drop-ins
+  # iface-specific networkd drop-ins / link files
   local nd
-  for nd in /etc/systemd/network/10-securebox-*.network; do
+  for nd in /etc/systemd/network/10-securebox-*.network /etc/systemd/network/10-securebox-*.link; do
     [[ -e "$nd" ]] || continue
     if [[ ! -e "${backup_root}${nd}" ]]; then
       _restore_remove_file "$nd"
