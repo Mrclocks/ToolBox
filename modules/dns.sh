@@ -100,7 +100,11 @@ dns_run_benchmark() {
 
     printf '   testing %-12s %-15s ... ' "$id" "$primary"
     if ms="$(dns_avg_ms "$primary")"; then
-      printf '%s%sms%s\n' "$C_GREEN" "$ms" "$C_RESET"
+      if (( ms == 0 )); then
+        printf '%s<1ms%s\n' "$C_GREEN" "$C_RESET"
+      else
+        printf '%s%sms%s\n' "$C_GREEN" "$ms" "$C_RESET"
+      fi
       DNS_BENCH_OK+=("1")
       DNS_BENCH_MS+=("$ms")
       if (( ms < best_ms )); then
