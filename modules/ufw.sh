@@ -19,6 +19,13 @@ module_ufw() {
 
   backup_file /etc/ufw/ufw.conf
   backup_file /etc/default/ufw
+  # Rulesets — needed for accurate restore
+  backup_file /etc/ufw/user.rules
+  backup_file /etc/ufw/user6.rules
+  backup_file /etc/ufw/before.rules
+  backup_file /etc/ufw/after.rules
+  backup_file /etc/ufw/before6.rules
+  backup_file /etc/ufw/after6.rules
 
   if answered_yes disable_ipv6; then
     sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw || true

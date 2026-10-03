@@ -23,6 +23,7 @@ sudo mrclock
 - 🚫 بلاک رنج abuse *(اختیاری)*
 - 🔒 خاموش کردن IPv6 *(اختیاری)*
 - 🧹 پاک‌سازی لاگ Ubuntu / Docker
+- ♻️ بازگردانی تغییرات قبلی (DNS/MTU/SSH/UFW/…)
 
 گزینه ۱: **Automatic** (فقط UFW و IPv6 پرسیده می‌شود) یا **Customize**.
 

@@ -503,3 +503,59 @@ questionnaire_timesync_only() {
   review_answers
   answered_yes do_timesync && ui_confirm "Apply time sync now?" "Y"
 }
+
+ask_restore() {
+  local -a runs=()
+  local r
+  while IFS= read -r r; do
+    [[ -n "$r" ]] && runs+=("$r")
+  done < <(_restore_list_runs | head -n 12)
+
+  if ((${#runs[@]} == 0)); then
+    ui_error "No MrClock backups found in ${SECUREBOX_BACKUP_ROOT}"
+    ui_info "Run some features first — configs are snapshotted before changes."
+    SECUREBOX_ANSWERS[do_restore]=no
+    return 1
+  fi
+
+  local default
+  default="$(_restore_pick_default_run || true)"
+  local -a labels=()
+  local n mark
+  for r in "${runs[@]}"; do
+    n="$(find "${SECUREBOX_BACKUP_ROOT}/${r}" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    mark=""
+    [[ "$r" == "$default" ]] && mark=" ★ recommended"
+    if [[ -f "${SECUREBOX_BACKUP_ROOT}/${r}/MANIFEST.txt" ]]; then
+      labels+=("${r}  (${n} files, manifest)${mark}")
+    else
+      labels+=("${r}  (${n} files, legacy)${mark}")
+    fi
+  done
+
+  echo
+  ui_warn "This restores DNS / MTU / SSH / UFW / Fail2Ban / sysctl / abuse configs."
+  ui_warn "Does NOT undo apt upgrades or deleted logs."
+  local choice
+  ui_menu choice "Select backup run to restore" "${labels[@]}"
+  if ! is_uint "$choice" || (( choice < 1 || choice > ${#runs[@]} )); then
+    ui_error "Invalid selection"
+    SECUREBOX_ANSWERS[do_restore]=no
+    return 1
+  fi
+  SECUREBOX_ANSWERS[restore_run]="${runs[$((choice - 1))]}"
+  _restore_preview "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_ANSWERS[restore_run]}"
+
+  if ui_confirm "Restore these files and remove MrClock drop-ins from that run?" "N"; then
+    SECUREBOX_ANSWERS[do_restore]=yes
+    return 0
+  fi
+  SECUREBOX_ANSWERS[do_restore]=no
+  return 1
+}
+
+questionnaire_restore_only() {
+  questionnaire_common_safety
+  ask_restore || return 1
+  answered_yes do_restore
+}

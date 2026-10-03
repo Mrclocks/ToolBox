@@ -30,6 +30,8 @@ source_modules() {
   # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/logs.sh"
   # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/restore.sh"
+  # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/report.sh"
 }
 
@@ -88,6 +90,7 @@ run_single() {
     unattended) module_unattended ;;
     services) module_services ;;
     logs) module_logs ;;
+    restore) module_restore ;;
     report) module_report ;;
     *) ui_error "Unknown module: $name"; return 1 ;;
   esac

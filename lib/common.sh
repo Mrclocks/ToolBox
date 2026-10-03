@@ -147,14 +147,46 @@ is_cidr_v4() {
 
 backup_file() {
   local src="$1"
-  [[ -e "$src" ]] || return 0
   local dest_dir="${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  local manifest="${dest_dir}/MANIFEST.txt"
   mkdir -p "$dest_dir"
-  local rel="${src#/}"
-  local dest="${dest_dir}/${rel}"
-  mkdir -p "$(dirname "$dest")"
-  cp -a "$src" "$dest"
-  log INFO "Backup: $src -> $dest"
+  local abs
+  if [[ "$src" == /* ]]; then
+    abs="$src"
+  else
+    abs="/${src}"
+  fi
+  local rel="${abs#/}"
+
+  if [[ -e "$src" ]]; then
+    local dest="${dest_dir}/${rel}"
+    mkdir -p "$(dirname "$dest")"
+    cp -a "$src" "$dest"
+    if [[ -f "$manifest" ]] && grep -qxF "RESTORE|${abs}" "$manifest" 2>/dev/null; then
+      :
+    else
+      printf 'RESTORE|%s\n' "$abs" >>"$manifest"
+    fi
+    log INFO "Backup: $src -> $dest"
+  else
+    if [[ -f "$manifest" ]] && grep -qxE "(RESTORE|REMOVE)\|${abs}" "$manifest" 2>/dev/null; then
+      :
+    else
+      printf 'REMOVE|%s\n' "$abs" >>"$manifest"
+    fi
+    log INFO "Backup mark NEW (remove on restore): $abs"
+  fi
+  record_backup_run
+}
+
+# Remember which run id holds the latest toolbox changes (for Undo menu)
+record_backup_run() {
+  mkdir -p "$SECUREBOX_STATE_DIR"
+  printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_backup_run"
+  local hist="${SECUREBOX_STATE_DIR}/backup_runs.txt"
+  if [[ ! -f "$hist" ]] || ! grep -qxF "$SECUREBOX_RUN_ID" "$hist" 2>/dev/null; then
+    printf '%s\n' "$SECUREBOX_RUN_ID" >>"$hist"
+  fi
 }
 
 write_sysctl_dropin() {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8 — 2026-10-03
+
+### Added
+- **Restore previous changes** (menu 15): restore DNS / MTU / SSH / UFW / Fail2Ban / sysctl / abuse from MrClock backups
+- Backup MANIFEST tracks new vs existing files for accurate undo
+- UFW rule files included in backups for proper restore
+
 ## 0.1.7 — 2026-10-03
 
 ### Changed
