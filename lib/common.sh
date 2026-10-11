@@ -26,6 +26,7 @@ export SECUREBOX_BACKUP_ROOT SECUREBOX_LOG_DIR SECUREBOX_STATE_DIR
 export SECUREBOX_RUN_ID SECUREBOX_LOG
 
 mkdir -p "$SECUREBOX_LOG_DIR" "$SECUREBOX_STATE_DIR" "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
+chmod 700 "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
 
 log() {
   local level="$1"; shift
@@ -143,10 +144,17 @@ is_port_spec() {
 
 is_ipv4() {
   local ip="${1-}"
+  # Strict decimal octets — reject leading zeros (08.1.1.1) which break
+  # bash arithmetic (octal) and are invalid dotted-quad forms.
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
   local IFS=.
+  local a b c d
   read -r a b c d <<<"$ip"
-  (( a <= 255 && b <= 255 && c <= 255 && d <= 255 ))
+  [[ "$a" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$b" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$c" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$d" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  (( 10#$a <= 255 && 10#$b <= 255 && 10#$c <= 255 && 10#$d <= 255 ))
 }
 
 # Detect live SSH listen ports: SSH_CONNECTION, ss (sshd), then sshd_config.
@@ -203,18 +211,12 @@ detect_live_ssh_ports() {
   done | sort -n
 }
 
-is_cidr_v4() {
-  local c="${1-}"
-  [[ "$c" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$ ]] || return 1
-  local ip="${c%/*}"
-  is_ipv4 "$ip"
-}
-
 backup_file() {
   local src="$1"
   local dest_dir="${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
   local manifest="${dest_dir}/MANIFEST.txt"
   mkdir -p "$dest_dir"
+  chmod 700 "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
   local abs
   if [[ "$src" == /* ]]; then
     abs="$src"

@@ -29,25 +29,51 @@ _securebox_resolve_ref() {
     return 0
   fi
 
-  local api tag
-  api="https://api.github.com/repos/${SECUREBOX_REPO}/releases/latest"
-  tag="$(curl -fsSL --connect-timeout 15 "$api" 2>/dev/null \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    | head -n1)"
+  # Prefer /releases/latest redirect (no api.github.com rate limits)
+  local tag loc
+  loc="$(curl -fsSIL --connect-timeout 15 \
+    "https://github.com/${SECUREBOX_REPO}/releases/latest" 2>/dev/null \
+    | tr -d '\r' \
+    | awk 'tolower($1)=="location:"{print $2; exit}')"
+  if [[ -n "$loc" ]]; then
+    tag="${loc##*/}"
+  fi
 
-  # Fallback: newest release including pre-releases
-  if [[ -z "$tag" || "$tag" == "null" ]]; then
-    api="https://api.github.com/repos/${SECUREBOX_REPO}/releases?per_page=5"
-    tag="$(curl -fsSL --connect-timeout 15 "$api" 2>/dev/null \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  # Fallback: parse HTML of releases/latest
+  if [[ -z "$tag" || "$tag" == "latest" ]]; then
+    tag="$(curl -fsSL --connect-timeout 15 \
+      "https://github.com/${SECUREBOX_REPO}/releases/latest" 2>/dev/null \
+      | sed -n 's|.*releases/tag/\([^"<> ]*\).*|\1|p' \
       | head -n1)"
   fi
 
-  if [[ -z "$tag" || "$tag" == "null" ]]; then
-    echo "[MrClock] ERROR: could not resolve latest release tag." >&2
+  if [[ -z "$tag" || "$tag" == "null" || "$tag" == "latest" ]]; then
+    echo "[MrClock] ERROR: could not resolve latest release tag via /releases/latest." >&2
     return 1
   fi
   printf '%s\n' "$tag"
+}
+
+_securebox_verify_release_integrity() {
+  # When SHA256SUMS is present next to the tree or downloaded with the archive,
+  # verify install.sh / VERSION. Soft-fail with warning if missing (local git).
+  local root="$1"
+  local sums="${root}/SHA256SUMS"
+  if [[ ! -f "$sums" ]]; then
+    return 0
+  fi
+  echo "[MrClock] Verifying release integrity via SHA256SUMS..." >&2
+  if command -v sha256sum >/dev/null 2>&1; then
+    if ! (cd "$root" && sha256sum -c SHA256SUMS --ignore-missing >/dev/null 2>&1); then
+      echo "[MrClock] ERROR: SHA256SUMS verification failed." >&2
+      return 1
+    fi
+  fi
+  if [[ -f "${root}/SHA256SUMS.asc" ]] && command -v gpg >/dev/null 2>&1; then
+    gpg --verify "${root}/SHA256SUMS.asc" "$sums" >/dev/null 2>&1 \
+      || echo "[MrClock] WARN: SHA256SUMS.asc signature could not be verified." >&2
+  fi
+  return 0
 }
 
 _securebox_install_persistent() {
@@ -104,6 +130,18 @@ _securebox_fetch_tree() {
     echo "[MrClock] ERROR: archive layout unexpected." >&2
     rm -rf "$tmp"
     exit 1
+  fi
+
+  # Download SHA256SUMS from the release assets when available
+  local sums_url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS"
+  if curl -fsSL --connect-timeout 15 "$sums_url" -o "${extracted}/SHA256SUMS" 2>/dev/null; then
+    curl -fsSL --connect-timeout 15 \
+      "https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS.asc" \
+      -o "${extracted}/SHA256SUMS.asc" 2>/dev/null || true
+    _securebox_verify_release_integrity "$extracted" || {
+      rm -rf "$tmp"
+      exit 1
+    }
   fi
 
   printf '%s\n' "$extracted"
@@ -171,16 +209,38 @@ ${SECUREBOX_NAME} v${SECUREBOX_VERSION}
 
 Usage: sudo bash install.sh [options]
 
-Options:
+Modes:
+  (default)            Interactive menu
   --one-click          Non-interactive Apply All with safe defaults
-  --ssh-port <port>    SSH port for --one-click
-  --disable-ipv6       Disable IPv6 in --one-click
-  --mtu <value>        MTU for --one-click (or 'keep')
-  --dns <id>           cloudflare|google|quad9|opendns|adguard|keep
-  --no-abuse-block     Skip abuse CIDR blocking
-  --no-ufw             Prepare rules but do not enable UFW
-  --help               Show this help
+  --dry-run            Plan only — show what would change, do not apply
+  --verify             Run the verify module and exit
+  --help, -h           Show this help
 
+SSH / network:
+  --ssh-port <port>    SSH port (1–65535) for --one-click
+  --mtu <value>        MTU (1280–9000) or 'keep'
+  --dns <id>           cloudflare|google|quad9|opendns|adguard|keep
+  --disable-ipv6       Disable IPv6 in --one-click
+
+UFW:
+  --ufw                Enable UFW in --one-click
+  --no-ufw             Do not enable UFW (default for one-click)
+  --ufw-ports <list>   Extra allows, e.g. "443 51820/udp 1000:2000/tcp"
+  --ufw-discover       Auto-allow discovered public listeners
+  --ufw-reset          Reset UFW rules before applying (dangerous for NAT)
+
+Abuse / extras:
+  --block-abuse        Enable abuse CIDR blocking (minimal profile)
+  --no-abuse-block     Skip abuse CIDR blocking (default)
+  --abuse-profile <p>  minimal|aggressive (with --block-abuse)
+  --fail2ban           Enable Fail2Ban
+  --unattended         Enable unattended-upgrades
+
+Safety:
+  --rollback-seconds N Arm timed auto-rollback for SSH/UFW/DNS/MTU (default 120)
+  --no-rollback        Disable timed auto-rollback
+
+Exit status: non-zero if any module failed.
 Interactive mode (default): menu with Apply All + individual features.
 EOF
 }
@@ -195,6 +255,9 @@ defaults_one_click() {
   SECUREBOX_ANSWERS[do_timesync]=yes
   SECUREBOX_ANSWERS[do_bbr]=yes
   SECUREBOX_ANSWERS[do_ssh]=no
+  SECUREBOX_ANSWERS[do_logs]=no
+  SECUREBOX_ANSWERS[logs_truncate_active]=no
+  SECUREBOX_ANSWERS[logs_docker_prune]=no
   SECUREBOX_ANSWERS[dns_choice]=6
   SECUREBOX_ANSWERS[dns_id]=keep
   SECUREBOX_ANSWERS[mtu]=keep
@@ -206,12 +269,14 @@ defaults_one_click() {
   SECUREBOX_ANSWERS[ssh_wait_confirm]=no
   SECUREBOX_ANSWERS[ssh_password_auth]=keep
   SECUREBOX_ANSWERS[ssh_permit_root]=keep
+  SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
   SECUREBOX_ANSWERS[disable_ipv6]="${SECUREBOX_CLI_DISABLE_IPV6:-no}"
   SECUREBOX_ANSWERS[block_abuse]="${SECUREBOX_CLI_BLOCK_ABUSE:-no}"
+  SECUREBOX_ANSWERS[abuse_profile]="${SECUREBOX_CLI_ABUSE_PROFILE:-minimal}"
   SECUREBOX_ANSWERS[ufw_enable]="${SECUREBOX_CLI_UFW_ENABLE:-no}"
-  SECUREBOX_ANSWERS[ufw_auto_discover]=no
-  SECUREBOX_ANSWERS[ufw_ports]=""
-  SECUREBOX_ANSWERS[ufw_reset]=no
+  SECUREBOX_ANSWERS[ufw_auto_discover]="${SECUREBOX_CLI_UFW_DISCOVER:-no}"
+  SECUREBOX_ANSWERS[ufw_ports]="${SECUREBOX_CLI_UFW_PORTS:-}"
+  SECUREBOX_ANSWERS[ufw_reset]="${SECUREBOX_CLI_UFW_RESET:-no}"
   SECUREBOX_ANSWERS[enable_fail2ban]="${SECUREBOX_CLI_FAIL2BAN:-no}"
   SECUREBOX_ANSWERS[unattended]="${SECUREBOX_CLI_UNATTENDED:-no}"
   SECUREBOX_ANSWERS[unattended_reboot]=no
@@ -231,35 +296,68 @@ defaults_one_click() {
       opendns) SECUREBOX_ANSWERS[dns_choice]=4; SECUREBOX_ANSWERS[dns_id]=opendns; SECUREBOX_ANSWERS[dns_primary]=208.67.222.222; SECUREBOX_ANSWERS[dns_secondary]=208.67.220.220 ;;
       adguard) SECUREBOX_ANSWERS[dns_choice]=5; SECUREBOX_ANSWERS[dns_id]=adguard; SECUREBOX_ANSWERS[dns_primary]=94.140.14.14; SECUREBOX_ANSWERS[dns_secondary]=94.140.15.15 ;;
       keep) SECUREBOX_ANSWERS[dns_choice]=6; SECUREBOX_ANSWERS[dns_id]=keep ;;
+      *) ui_error "Invalid --dns value: ${SECUREBOX_CLI_DNS}"; exit 1 ;;
     esac
   fi
 }
 
 parse_args() {
   SECUREBOX_MODE=menu
+  SECUREBOX_DRY_RUN=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --one-click) SECUREBOX_MODE=one_click; shift ;;
+      --dry-run) SECUREBOX_DRY_RUN=1; SECUREBOX_MODE="${SECUREBOX_MODE:-menu}"; shift ;;
+      --verify) SECUREBOX_MODE=verify; shift ;;
       --ssh-port)
         [[ -n "${2-}" ]] || { ui_error "--ssh-port requires a value"; exit 1; }
+        if ! is_port "$2"; then
+          ui_error "Invalid --ssh-port: $2 (need 1–65535)"
+          exit 1
+        fi
         SECUREBOX_CLI_SSH_PORT="$2"; shift 2 ;;
       --disable-ipv6) SECUREBOX_CLI_DISABLE_IPV6=yes; shift ;;
       --mtu)
         [[ -n "${2-}" ]] || { ui_error "--mtu requires a value"; exit 1; }
+        if [[ "$2" != "keep" ]] && { ! is_uint "$2" || (( $2 < 1280 || $2 > 9000 )); }; then
+          ui_error "Invalid --mtu: $2 (need 1280–9000 or 'keep')"
+          exit 1
+        fi
         SECUREBOX_CLI_MTU="$2"; shift 2 ;;
       --dns)
         [[ -n "${2-}" ]] || { ui_error "--dns requires a value"; exit 1; }
+        case "$2" in
+          cloudflare|google|quad9|opendns|adguard|keep) ;;
+          *) ui_error "Invalid --dns: $2 (cloudflare|google|quad9|opendns|adguard|keep)"; exit 1 ;;
+        esac
         SECUREBOX_CLI_DNS="$2"; shift 2 ;;
       --no-abuse-block) SECUREBOX_CLI_BLOCK_ABUSE=no; shift ;;
       --block-abuse) SECUREBOX_CLI_BLOCK_ABUSE=yes; shift ;;
+      --abuse-profile)
+        [[ -n "${2-}" ]] || { ui_error "--abuse-profile requires minimal|aggressive"; exit 1; }
+        case "$2" in
+          minimal|aggressive) SECUREBOX_CLI_ABUSE_PROFILE="$2" ;;
+          *) ui_error "Invalid --abuse-profile: $2"; exit 1 ;;
+        esac
+        shift 2 ;;
       --no-ufw) SECUREBOX_CLI_UFW_ENABLE=no; shift ;;
       --ufw) SECUREBOX_CLI_UFW_ENABLE=yes; shift ;;
+      --ufw-ports)
+        [[ -n "${2-}" ]] || { ui_error "--ufw-ports requires a value"; exit 1; }
+        SECUREBOX_CLI_UFW_PORTS="$2"; shift 2 ;;
+      --ufw-discover) SECUREBOX_CLI_UFW_DISCOVER=yes; shift ;;
+      --ufw-reset) SECUREBOX_CLI_UFW_RESET=yes; shift ;;
       --fail2ban) SECUREBOX_CLI_FAIL2BAN=yes; shift ;;
       --unattended) SECUREBOX_CLI_UNATTENDED=yes; shift ;;
+      --rollback-seconds)
+        [[ -n "${2-}" ]] && is_uint "$2" || { ui_error "--rollback-seconds requires a number"; exit 1; }
+        SECUREBOX_ROLLBACK_SECONDS="$2"; shift 2 ;;
+      --no-rollback) SECUREBOX_ROLLBACK_SECONDS=0; shift ;;
       --help|-h) usage; exit 0 ;;
       *) ui_error "Unknown option: $1"; usage; exit 1 ;;
     esac
   done
+  export SECUREBOX_DRY_RUN SECUREBOX_ROLLBACK_SECONDS
 }
 
 menu_loop() {
@@ -430,8 +528,34 @@ main() {
     one_click)
       ui_banner
       defaults_one_click
-      review_answers
+      if [[ "${SECUREBOX_DRY_RUN:-0}" == "1" ]] && declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen
+        exit 0
+      fi
+      if declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen || true
+        if have_tty && ! ui_confirm "Execute this plan?" "Y"; then
+          ui_warn "Cancelled."
+          exit 1
+        fi
+      else
+        review_answers
+      fi
       run_pipeline_all
+      if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+        exit 1
+      fi
+      ;;
+    verify)
+      ui_banner
+      if declare -F module_verify >/dev/null 2>&1; then
+        module_verify
+      else
+        run_single report
+      fi
+      if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+        exit 1
+      fi
       ;;
     menu)
       menu_loop

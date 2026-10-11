@@ -25,14 +25,6 @@ DNS_BENCH_MS=()      # average ms; 99999 = failed
 DNS_BENCH_OK=()      # 1/0
 DNS_BENCH_BEST_IDX=""
 
-dns_preset_labels() {
-  local p
-  for p in "${DNS_PRESETS[@]}"; do
-    IFS='|' read -r _ label _ _ <<<"$p"
-    printf '%s\n' "$label"
-  done
-}
-
 dns_ensure_dig() {
   if have_cmd dig; then
     return 0
@@ -176,33 +168,6 @@ dns_run_benchmark() {
   fi
   ui_warn "No DNS preset responded — you can keep current or enter custom"
   return 1
-}
-
-dns_apply_best_from_benchmark() {
-  # Sets SECUREBOX_ANSWERS dns_* from best preset (not "current")
-  local i id choice=0
-  if [[ -z "${DNS_BENCH_BEST_IDX}" ]]; then
-    return 1
-  fi
-  i="${DNS_BENCH_BEST_IDX}"
-  id="${DNS_BENCH_IDS[$i]}"
-  # Map id → preset index in DNS_PRESETS (1-based dns_choice)
-  local p pid
-  local n=0
-  for p in "${DNS_PRESETS[@]}"; do
-    n=$((n + 1))
-    IFS='|' read -r pid _ _ _ <<<"$p"
-    if [[ "$pid" == "$id" ]]; then
-      choice=$n
-      break
-    fi
-  done
-  (( choice > 0 )) || return 1
-  SECUREBOX_ANSWERS[dns_choice]="$choice"
-  SECUREBOX_ANSWERS[dns_id]="$id"
-  SECUREBOX_ANSWERS[dns_primary]="${DNS_BENCH_PRIMARY[$i]}"
-  SECUREBOX_ANSWERS[dns_secondary]="${DNS_BENCH_SECONDARY[$i]}"
-  return 0
 }
 
 dns_preset_labels_with_bench() {

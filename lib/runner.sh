@@ -43,6 +43,10 @@ run_pipeline_all() {
   done
   ui_box_end
 
+  if [[ "${SECUREBOX_DRY_RUN:-0}" == "1" ]]; then
+    ui_warn "DRY-RUN mode — modules will skip live changes where supported"
+  fi
+
   local -a steps=(
     module_update
     module_timesync
@@ -71,6 +75,10 @@ run_pipeline_all() {
       return 1
     fi
   done
+  if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+    ui_error "One or more modules failed: ${SECUREBOX_FAILED_MODULES[*]}"
+    return 1
+  fi
   return 0
 }
 
