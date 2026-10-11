@@ -266,7 +266,22 @@ module_dns() {
   ui_info "DNS manager: ${DNS_MANAGER}"
   ui_info "Applying DNS: ${DNS_PRIMARY} ${DNS_SECONDARY}"
 
+  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
+    ui_info "[dry-run] Would apply DNS ${DNS_PRIMARY} ${DNS_SECONDARY}"
+    module_ok "dns"
+    return 0
+  fi
+
   if apply_dns_servers "$DNS_PRIMARY" "$DNS_SECONDARY"; then
+    local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )); then
+      if declare -F schedule_timed_rollback >/dev/null 2>&1; then
+        schedule_timed_rollback "dns" "$rollback_secs" || true
+      fi
+      if have_tty && ui_confirm "DNS applied — confirm resolution still works (cancel auto-rollback)?" "Y"; then
+        cancel_timed_rollback "dns" || true
+      fi
+    fi
     module_ok "dns"
     ui_success "DNS configured via ${DNS_MANAGER}"
   else

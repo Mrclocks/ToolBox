@@ -22,21 +22,17 @@ else
 fi
 
 ui_clear() {
-  # Aggressive clear for mobile SSH / Termux / broken TTYs so old logs never stick
-  # \033c = full terminal reset; then wipe scrollback + home cursor
-  {
-    printf '\033c\033[3J\033[2J\033[H\033[0m'
-  } 2>/dev/null || true
-  if [[ -w /dev/tty ]]; then
-    {
-      printf '\033c\033[3J\033[2J\033[H\033[0m' >/dev/tty
-    } 2>/dev/null || true
-    clear >/dev/tty 2>/dev/null || true
+  # Prefer clear -x (keeps scrollback policy sane; avoids full RIS \033c which
+  # breaks some mobile SSH clients / tmux). Fall back to ANSI wipe.
+  if have_cmd clear; then
+    clear -x 2>/dev/null || clear 2>/dev/null || true
+    if [[ -w /dev/tty ]]; then
+      clear -x >/dev/tty 2>/dev/null || clear >/dev/tty 2>/dev/null || true
+    fi
+  else
+    printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+    [[ -w /dev/tty ]] && printf '\033[H\033[2J\033[3J' >/dev/tty 2>/dev/null || true
   fi
-  clear 2>/dev/null || true
-  # Final home — some clients ignore scrollback wipe
-  printf '\033[H\033[2J' 2>/dev/null || true
-  [[ -w /dev/tty ]] && printf '\033[H\033[2J' >/dev/tty 2>/dev/null || true
 }
 
 ui_line() {

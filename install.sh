@@ -200,6 +200,10 @@ source "${SECUREBOX_ROOT}/lib/net.sh"
 # shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/questions.sh"
 # shellcheck disable=SC1091
+source "${SECUREBOX_ROOT}/lib/rollback.sh"
+# shellcheck disable=SC1091
+source "${SECUREBOX_ROOT}/lib/plan.sh"
+# shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/runner.sh"
 
 source_modules
@@ -383,6 +387,7 @@ menu_loop() {
     printf '  %s14)%s Clean Logs (Ubuntu/Docker)\n' "$C_ORANGE" "$C_RESET"
     printf '  %s15)%s Restore previous changes\n' "$C_GREEN" "$C_RESET"
     printf '  %s16)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s17)%s Verify (sshd/ss/resolvectl/ufw/tc/sysctl)\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
     ui_line 56 '-'
     local choice
@@ -478,6 +483,11 @@ menu_loop() {
       16)
         ui_clear
         run_single report
+        ui_pause
+        ;;
+      17)
+        ui_clear
+        run_single verify
         ui_pause
         ;;
       0|q|Q|exit)

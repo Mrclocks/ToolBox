@@ -205,6 +205,19 @@ module_ufw() {
 
   ufw --force enable >/dev/null 2>&1 || true
   systemctl enable ufw >/dev/null 2>&1 || true
+
+  local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+  if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )); then
+    if declare -F schedule_timed_rollback >/dev/null 2>&1; then
+      schedule_timed_rollback "ufw" "$rollback_secs" || true
+    fi
+    if have_tty; then
+      if ui_confirm "UFW is enabled — confirm you still have access (cancel auto-rollback)?" "Y"; then
+        cancel_timed_rollback "ufw" || true
+      fi
+    fi
+  fi
+
   module_ok "ufw"
   ui_success "UFW enabled with SSH and approved ports"
 }

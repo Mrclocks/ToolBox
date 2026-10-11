@@ -458,7 +458,11 @@ questionnaire_all() {
       ui_step "Automatic needs two decisions (can cut access if wrong)"
       ask_ipv6
       ask_ufw
-      review_answers
+      if declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen
+      else
+        review_answers
+      fi
       if ! ui_confirm "Run LOW-RISK automatic Apply All with these choices?" "Y"; then
         ui_warn "Cancelled by user."
         return 1
@@ -481,7 +485,11 @@ questionnaire_all() {
       ask_unattended
       ask_services
       ask_logs
-      review_answers
+      if declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen
+      else
+        review_answers
+      fi
       if ! ui_confirm "Proceed using ONLY these answers (nothing else will be forced)?" "Y"; then
         ui_warn "Cancelled by user."
         return 1
