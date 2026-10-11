@@ -180,8 +180,9 @@ apply_persistent_mtu() {
   local old_mtu
   old_mtu="$(iface_mtu "$iface" || echo "")"
   if [[ -n "$old_mtu" ]]; then
-    state_record_once "mtu_${iface}" "$old_mtu"
-    state_record_once "mtu_iface" "$iface"
+    # Refresh every change — once-only baselines go stale after later edits
+    state_record "mtu_${iface}" "$old_mtu"
+    state_record "mtu_iface" "$iface"
   fi
 
   # Detect netplan/DHCP MTU overrides that may fight us on reboot

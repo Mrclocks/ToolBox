@@ -270,15 +270,79 @@ record_backup_run() {
   fi
 }
 
-# Record a live pre-change value once (first write wins for the session baseline)
-state_record_once() {
+# Record a live pre-change value (always refresh — baselines go stale otherwise)
+state_record() {
   local key="$1"
   local value="$2"
   mkdir -p "$SECUREBOX_STATE_DIR"
-  local f="${SECUREBOX_STATE_DIR}/${key}"
-  if [[ ! -f "$f" ]]; then
-    printf '%s\n' "$value" >"$f"
+  printf '%s\n' "$value" >"${SECUREBOX_STATE_DIR}/${key}"
+}
+
+# Back-compat alias — now refreshes like state_record (was first-write-wins)
+state_record_once() {
+  state_record "$@"
+}
+
+# Recover SSH_* after sudo env_reset. sudo typically drops SSH_CONNECTION.
+# Walk /proc for the invoking user's sshd session environ.
+recover_ssh_env() {
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    export SSH_CONNECTION SSH_CLIENT SSH_TTY 2>/dev/null || true
+    return 0
   fi
+
+  local uid="" pid environ_file line
+  if [[ -n "${SUDO_UID:-}" ]] && is_uint "${SUDO_UID}"; then
+    uid="$SUDO_UID"
+  elif [[ -n "${SUDO_USER:-}" ]]; then
+    uid="$(id -u "$SUDO_USER" 2>/dev/null || true)"
+  fi
+
+  # Prefer processes owned by the sudo invoker; also scan sshd sessions
+  local -a pids=()
+  if [[ -n "$uid" ]] && have_cmd pgrep; then
+    mapfile -t pids < <(pgrep -u "$uid" 2>/dev/null || true)
+  fi
+  if have_cmd pgrep; then
+    mapfile -t pids < <(printf '%s\n' "${pids[@]}" "$(pgrep -f 'sshd:' 2>/dev/null || true)" | awk 'NF' | sort -u)
+  fi
+
+  for pid in "${pids[@]}"; do
+    environ_file="/proc/${pid}/environ"
+    [[ -r "$environ_file" ]] || continue
+    # Extract SSH_* null-separated vars
+    local conn="" client="" tty=""
+    while IFS= read -r -d '' line; do
+      case "$line" in
+        SSH_CONNECTION=*) conn="${line#SSH_CONNECTION=}" ;;
+        SSH_CLIENT=*) client="${line#SSH_CLIENT=}" ;;
+        SSH_TTY=*) tty="${line#SSH_TTY=}" ;;
+      esac
+    done <"$environ_file" 2>/dev/null || true
+    if [[ -n "$conn" ]]; then
+      export SSH_CONNECTION="$conn"
+      [[ -n "$client" ]] && export SSH_CLIENT="$client"
+      [[ -n "$tty" ]] && export SSH_TTY="$tty"
+      log INFO "Recovered SSH_CONNECTION from pid ${pid} (sudo env_reset workaround)"
+      return 0
+    fi
+  done
+
+  # Last resort: infer client from who/ss for the sudo user
+  if [[ -n "${SUDO_USER:-}" ]] && have_cmd who; then
+    local from
+    from="$(who 2>/dev/null | awk -v u="$SUDO_USER" '$1==u && $NF ~ /^\(/ {gsub(/[()]/,"",$NF); print $NF; exit}')"
+    if [[ -n "$from" ]]; then
+      # Synthesize a minimal SSH_CONNECTION (client_ip 0 server_ip 22)
+      local sport
+      sport="$(detect_live_ssh_ports 2>/dev/null | head -n1 || echo 22)"
+      export SSH_CONNECTION="${from} 0 0.0.0.0 ${sport}"
+      export SSH_CLIENT="${from} 0 ${sport}"
+      log INFO "Synthesized SSH_CONNECTION from who(1) for ${SUDO_USER}"
+      return 0
+    fi
+  fi
+  return 1
 }
 
 state_get() {
@@ -301,9 +365,8 @@ state_record_sysctl_baseline() {
     net.netfilter.nf_conntrack_max; do
     val="$(sysctl -n "$key" 2>/dev/null || true)"
     [[ -n "$val" ]] || continue
-    if [[ ! -f "${SECUREBOX_STATE_DIR}/sysctl/${key}" ]]; then
-      printf '%s\n' "$val" >"${SECUREBOX_STATE_DIR}/sysctl/${key}"
-    fi
+    # Refresh each run so restore matches the pre-change live value
+    printf '%s\n' "$val" >"${SECUREBOX_STATE_DIR}/sysctl/${key}"
   done
 }
 

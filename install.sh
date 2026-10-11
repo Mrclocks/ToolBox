@@ -57,43 +57,86 @@ _securebox_resolve_ref() {
 _securebox_verify_release_assets() {
   # Trust model: SHA256SUMS (+ optional .asc) MUST be separate GitHub Release
   # assets — NEVER trust a checksum file that arrived inside the same tarball.
-  # Expect lines like:
-  #   <hash>  install.sh
-  #   <hash>  ToolBox-<tag>.tar.gz
+  # Fail-closed by default. Override only with SECUREBOX_ALLOW_INSECURE=1.
+  # Optional pinned key: SECUREBOX_GPG_FINGERPRINT=ABCD... (requires .asc)
   local archive="$1"
   local tag="$2"
   local asset_dir="$3"
   local sums="${asset_dir}/SHA256SUMS"
   local sig="${asset_dir}/SHA256SUMS.asc"
+  local allow_insecure=0
+  case "${SECUREBOX_ALLOW_INSECURE:-0}" in
+    1|y|yes|true|on) allow_insecure=1 ;;
+  esac
 
   if [[ ! -f "$sums" ]]; then
-    echo "[MrClock] WARN: no separate SHA256SUMS release asset — skipping integrity check." >&2
-    return 0
+    if (( allow_insecure )); then
+      echo "[MrClock] WARN: SHA256SUMS missing — continuing because SECUREBOX_ALLOW_INSECURE=1" >&2
+      return 0
+    fi
+    echo "[MrClock] ERROR: SHA256SUMS release asset missing. Refusing to continue." >&2
+    echo "[MrClock] Tip: publish SHA256SUMS as a Release asset, or set SECUREBOX_ALLOW_INSECURE=1" >&2
+    return 1
   fi
 
-  if [[ -f "$sig" ]] && command -v gpg >/dev/null 2>&1; then
-    if gpg --verify "$sig" "$sums" >/dev/null 2>&1; then
-      echo "[MrClock] SHA256SUMS signature OK" >&2
-    else
-      echo "[MrClock] ERROR: SHA256SUMS.asc signature verification failed." >&2
+  local fp="${SECUREBOX_GPG_FINGERPRINT:-}"
+  if [[ -n "$fp" ]]; then
+    if [[ ! -f "$sig" ]]; then
+      echo "[MrClock] ERROR: SECUREBOX_GPG_FINGERPRINT set but SHA256SUMS.asc missing." >&2
       return 1
     fi
+    if ! command -v gpg >/dev/null 2>&1; then
+      echo "[MrClock] ERROR: gpg required to verify pinned signature." >&2
+      return 1
+    fi
+    if ! gpg --batch --status-fd 1 --verify "$sig" "$sums" 2>/dev/null \
+         | grep -q "VALIDSIG ${fp}\|VALIDSIG .*${fp}"; then
+      # Also accept fingerprint without spaces / short match via --with-colons
+      local status
+      status="$(gpg --batch --status-fd 1 --verify "$sig" "$sums" 2>/dev/null || true)"
+      if ! grep -E "VALIDSIG[ ]+${fp// /}" <<<"$status" >/dev/null; then
+        echo "[MrClock] ERROR: SHA256SUMS.asc not signed by pinned fingerprint ${fp}" >&2
+        return 1
+      fi
+    fi
+    echo "[MrClock] SHA256SUMS signature OK (pinned fingerprint)" >&2
   elif [[ -f "$sig" ]]; then
-    echo "[MrClock] WARN: gpg missing — could not verify SHA256SUMS.asc" >&2
+    if command -v gpg >/dev/null 2>&1; then
+      if gpg --verify "$sig" "$sums" >/dev/null 2>&1; then
+        echo "[MrClock] SHA256SUMS signature OK" >&2
+      else
+        echo "[MrClock] ERROR: SHA256SUMS.asc signature verification failed." >&2
+        return 1
+      fi
+    else
+      if (( allow_insecure )); then
+        echo "[MrClock] WARN: gpg missing — skipping .asc check (SECUREBOX_ALLOW_INSECURE=1)" >&2
+      else
+        echo "[MrClock] ERROR: SHA256SUMS.asc present but gpg is not installed." >&2
+        return 1
+      fi
+    fi
   else
-    echo "[MrClock] WARN: SHA256SUMS.asc not published — checksums are unsigned." >&2
+    if (( allow_insecure )); then
+      echo "[MrClock] WARN: SHA256SUMS.asc not published — unsigned checksums accepted (ALLOW_INSECURE)" >&2
+    else
+      echo "[MrClock] WARN: SHA256SUMS.asc not published — checksum OK but unsigned." >&2
+      echo "[MrClock] Tip: set SECUREBOX_GPG_FINGERPRINT and publish .asc for signed releases." >&2
+    fi
   fi
 
   local archive_base want got
   archive_base="$(basename "$archive")"
-  # Accept either ToolBox-<tag>.tar.gz or the github archive name
   want="$(awk -v f1="ToolBox-${tag}.tar.gz" -v f2="$archive_base" '
     $2==f1 || $2==f2 || $NF==f1 || $NF==f2 {print $1; exit}
   ' "$sums")"
   if [[ -z "$want" ]]; then
-    # Also allow install.sh-only sums when fetching install.sh alone
-    echo "[MrClock] WARN: SHA256SUMS has no entry for archive ${archive_base}" >&2
-    return 0
+    if (( allow_insecure )); then
+      echo "[MrClock] WARN: SHA256SUMS has no entry for ${archive_base} — continuing (ALLOW_INSECURE)" >&2
+      return 0
+    fi
+    echo "[MrClock] ERROR: SHA256SUMS has no entry for archive ${archive_base}" >&2
+    return 1
   fi
   got="$(sha256sum "$archive" | awk '{print $1}')"
   if [[ "$got" != "$want" ]]; then
@@ -118,9 +161,17 @@ _securebox_install_persistent() {
   [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$SECUREBOX_INSTALL_DIR/CHANGELOG.md" || true
   chmod 755 "$SECUREBOX_INSTALL_DIR/install.sh"
   mkdir -p "$(dirname "$SECUREBOX_BIN_LINK")"
+  # Preserve SSH_* across sudo env_reset when the wrapper itself elevates.
+  # When already invoked as `sudo mrclock`, install.sh recovers SSH_* via /proc.
   cat >"$SECUREBOX_BIN_LINK" <<EOF
 #!/usr/bin/env bash
-exec bash "${SECUREBOX_INSTALL_DIR}/install.sh" "\$@"
+set -euo pipefail
+INSTALL_SH="${SECUREBOX_INSTALL_DIR}/install.sh"
+if [[ "\${EUID:-\$(id -u)}" -ne 0 ]]; then
+  exec sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY,SSH_AUTH_SOCK,SECUREBOX_ALLOW_INSECURE,SECUREBOX_GPG_FINGERPRINT,SECUREBOX_ROLLBACK_SECONDS \\
+    bash "\$INSTALL_SH" "\$@"
+fi
+exec bash "\$INSTALL_SH" "\$@"
 EOF
   chmod 755 "$SECUREBOX_BIN_LINK"
   echo "[MrClock] Installed to ${SECUREBOX_INSTALL_DIR} (command: mrclock)" >&2
@@ -161,13 +212,12 @@ _securebox_fetch_tree() {
     curl -fsSL --connect-timeout 15 \
       "https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS.asc" \
       -o "${sums_dir}/SHA256SUMS.asc" 2>/dev/null || true
-    _securebox_verify_release_assets "$archive" "$SECUREBOX_REF" "$sums_dir" || {
-      rm -rf "$tmp"
-      exit 1
-    }
-  else
-    echo "[MrClock] WARN: SHA256SUMS release asset missing — publish it separately for integrity." >&2
   fi
+  # Fail-closed verify (missing sums ⇒ error unless SECUREBOX_ALLOW_INSECURE=1)
+  _securebox_verify_release_assets "$archive" "$SECUREBOX_REF" "$sums_dir" || {
+    rm -rf "$tmp"
+    exit 1
+  }
 
   tar -xzf "$archive" -C "$tmp" || {
     echo "[MrClock] ERROR: failed to extract archive." >&2
@@ -554,6 +604,16 @@ main() {
 
   require_root
   parse_args "$@"
+  # sudo env_reset drops SSH_CONNECTION — recover before any IPv6/port/f2b logic
+  if declare -F recover_ssh_env >/dev/null 2>&1; then
+    recover_ssh_env || true
+    if [[ -z "${SSH_CONNECTION:-}" ]]; then
+      ui_warn "SSH_CONNECTION unset (common under sudo). Prefer: sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT mrclock"
+    fi
+  fi
+  # Default timed-rollback window (MTU/SSH/UFW/DNS share this; 0 disables)
+  SECUREBOX_ROLLBACK_SECONDS="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+  export SECUREBOX_ROLLBACK_SECONDS
   assert_supported_os
   detect_network_stack
   detect_dns_manager

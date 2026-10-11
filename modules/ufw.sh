@@ -100,14 +100,12 @@ module_ufw() {
     return 0
   fi
 
-  # Record whether UFW was enabled before we touch it (for live restore)
+  # Record whether UFW was enabled before we touch it (refresh each run)
   mkdir -p "$SECUREBOX_STATE_DIR"
-  if [[ ! -f "${SECUREBOX_STATE_DIR}/ufw_was_enabled" ]]; then
-    if ufw status 2>/dev/null | grep -qi 'Status: active'; then
-      echo "yes" >"${SECUREBOX_STATE_DIR}/ufw_was_enabled"
-    else
-      echo "no" >"${SECUREBOX_STATE_DIR}/ufw_was_enabled"
-    fi
+  if ufw status 2>/dev/null | grep -qi 'Status: active'; then
+    state_record "ufw_was_enabled" "yes"
+  else
+    state_record "ufw_was_enabled" "no"
   fi
 
   backup_file /etc/ufw/ufw.conf
@@ -209,15 +207,16 @@ module_ufw() {
   ufw --force enable >/dev/null 2>&1 || true
   systemctl enable ufw >/dev/null 2>&1 || true
 
+  # Timed rollback only when interactive (no TTY ⇒ schedule_timed_rollback no-ops)
   local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
-  if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )); then
+  if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
     if declare -F schedule_timed_rollback >/dev/null 2>&1; then
       schedule_timed_rollback "ufw" "$rollback_secs" || true
     fi
-    if have_tty; then
-      if ui_confirm "UFW is enabled — confirm you still have access (cancel auto-rollback)?" "Y"; then
-        cancel_timed_rollback "ufw" || true
-      fi
+    if ui_confirm "UFW is enabled — confirm you still have access (cancel auto-rollback)?" "Y"; then
+      cancel_timed_rollback "ufw" || true
+    else
+      ui_warn "Leaving UFW rollback armed — will auto-disable if it was previously off"
     fi
   fi
 

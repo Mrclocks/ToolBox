@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1 — 2026-10-11
+
+### Fixed
+- **Timed rollback actually arms**: no longer deletes the freshly written script via
+  `cancel_timed_rollback` before `systemd-run`; verify script exists after arm
+- Rollback skipped without TTY (prevents one-click UFW auto-disable after 120s)
+- SSH timed rollback restores `ssh.socket` drop-in and clears `ssh_cutover` state
+- Recover `SSH_CONNECTION` / `SSH_CLIENT` after `sudo` `env_reset` (IPv6 check,
+  fail2ban ignoreip, SSH port detection); `mrclock` wrapper uses `--preserve-env`
+- Release verify **fail-closed** on missing `SHA256SUMS` (override:
+  `SECUREBOX_ALLOW_INSECURE=1`); optional `SECUREBOX_GPG_FINGERPRINT` pin
+- Refresh MTU / UFW / sysctl baselines every run (no stale `state_record_once`)
+- MTU timed-rollback default aligned to 120s (same as SSH/UFW/DNS)
+
 ## 0.2.0 — 2026-10-11
 
 ### Fixed — UFW

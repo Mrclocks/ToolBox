@@ -388,8 +388,7 @@ module_ssh() {
 
     # Timed auto-rollback unless confirmed
     local rollback_secs="${SECUREBOX_ANSWERS[ssh_rollback_seconds]:-${SECUREBOX_ROLLBACK_SECONDS:-120}}"
-    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )); then
-      ui_warn "Auto-rollback armed: SSH config reverts in ${rollback_secs}s unless you confirm."
+    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
       if declare -F schedule_timed_rollback >/dev/null 2>&1; then
         schedule_timed_rollback "ssh" "$rollback_secs" || true
       fi

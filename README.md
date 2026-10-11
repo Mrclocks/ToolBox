@@ -75,9 +75,11 @@ Rule #1: never lock out the admin or cut connectivity.
 
 - After changing the SSH port, open a **new** terminal before closing the current session.
 - Automatic never enables abuse block or UFW without asking; keeps DNS/MTU by default.
-- Release integrity: publish `SHA256SUMS` (+ `SHA256SUMS.asc`) as **separate** GitHub
-  Release assets — see [docs/RELEASE.md](docs/RELEASE.md). A checksum file inside the
-  tarball alone does not prove authenticity.
+- Prefer preserving SSH env under sudo (otherwise IPv6/admin-IP detection recover via `/proc`):
+  `sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY mrclock`
+- Timed rollback arms only on a TTY (never auto-reverts headless `--one-click`).
+- Release integrity is **fail-closed**: missing `SHA256SUMS` aborts unless
+  `SECUREBOX_ALLOW_INSECURE=1`. See [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Dev / CI
 
