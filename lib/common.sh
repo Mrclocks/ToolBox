@@ -249,11 +249,52 @@ backup_file() {
 # Remember which run id holds the latest toolbox changes (for Undo menu)
 record_backup_run() {
   mkdir -p "$SECUREBOX_STATE_DIR"
-  printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_backup_run"
+  # Never overwrite last_recommended_run with a restore safety snapshot
+  if [[ "${SECUREBOX_ANSWERS[do_restore]:-}" != "yes" ]]; then
+    printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_backup_run"
+    printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_recommended_run"
+  fi
   local hist="${SECUREBOX_STATE_DIR}/backup_runs.txt"
   if [[ ! -f "$hist" ]] || ! grep -qxF "$SECUREBOX_RUN_ID" "$hist" 2>/dev/null; then
     printf '%s\n' "$SECUREBOX_RUN_ID" >>"$hist"
   fi
+}
+
+# Record a live pre-change value once (first write wins for the session baseline)
+state_record_once() {
+  local key="$1"
+  local value="$2"
+  mkdir -p "$SECUREBOX_STATE_DIR"
+  local f="${SECUREBOX_STATE_DIR}/${key}"
+  if [[ ! -f "$f" ]]; then
+    printf '%s\n' "$value" >"$f"
+  fi
+}
+
+state_get() {
+  local key="$1"
+  local f="${SECUREBOX_STATE_DIR}/${key}"
+  [[ -r "$f" ]] || return 1
+  tr -d '[:space:]' <"$f"
+}
+
+# Snapshot key sysctl values before BBR / IPv6 modules overwrite them
+state_record_sysctl_baseline() {
+  local key val
+  mkdir -p "${SECUREBOX_STATE_DIR}/sysctl"
+  for key in \
+    net.ipv4.ip_forward \
+    net.ipv4.tcp_congestion_control \
+    net.core.default_qdisc \
+    net.ipv6.conf.all.disable_ipv6 \
+    net.ipv6.conf.default.disable_ipv6 \
+    net.netfilter.nf_conntrack_max; do
+    val="$(sysctl -n "$key" 2>/dev/null || true)"
+    [[ -n "$val" ]] || continue
+    if [[ ! -f "${SECUREBOX_STATE_DIR}/sysctl/${key}" ]]; then
+      printf '%s\n' "$val" >"${SECUREBOX_STATE_DIR}/sysctl/${key}"
+    fi
+  done
 }
 
 write_sysctl_dropin() {

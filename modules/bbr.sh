@@ -22,6 +22,8 @@ module_bbr() {
     return 0
   fi
 
+  state_record_sysctl_baseline
+
   write_sysctl_dropin /etc/sysctl.d/99-securebox-bbr-network.conf \
     "net.core.default_qdisc = fq" \
     "net.ipv4.tcp_congestion_control = bbr" \

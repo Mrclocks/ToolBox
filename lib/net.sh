@@ -131,22 +131,37 @@ heal_network_safety() {
   fi
 }
 
-# Persist MTU via systemd .link only (never redefines IP/DHCP/gateway)
+# Persist MTU via systemd .link matched by MAC (not OriginalName — renames break that)
+_mtu_iface_mac() {
+  local iface="$1"
+  local mac=""
+  if [[ -r "/sys/class/net/${iface}/address" ]]; then
+    mac="$(tr -d '[:space:]' <"/sys/class/net/${iface}/address")"
+  fi
+  printf '%s\n' "$mac"
+}
+
 _mtu_write_link_file() {
   local iface="$1"
   local mtu="$2"
   mkdir -p /etc/systemd/network
   local linkfile="/etc/systemd/network/10-securebox-${iface}.link"
+  local mac
+  mac="$(_mtu_iface_mac "$iface")"
   backup_file "$linkfile"
-  cat >"$linkfile" <<EOF
-# Managed by MrClock ${SECUREBOX_VERSION}
-# SAFE: .link sets MTU only — does NOT touch IP / DHCP / gateway
-[Match]
-OriginalName=${iface}
-
-[Link]
-MTUBytes=${mtu}
-EOF
+  {
+    echo "# Managed by MrClock ${SECUREBOX_VERSION}"
+    echo "# SAFE: .link sets MTU only — does NOT touch IP / DHCP / gateway"
+    echo "[Match]"
+    if [[ -n "$mac" && "$mac" != "00:00:00:00:00:00" ]]; then
+      echo "MACAddress=${mac}"
+    else
+      echo "OriginalName=${iface}"
+    fi
+    echo
+    echo "[Link]"
+    echo "MTUBytes=${mtu}"
+  } >"$linkfile"
 }
 
 # Apply persistent MTU — connectivity-safe
@@ -160,6 +175,26 @@ apply_persistent_mtu() {
     return 1
   fi
 
+  # Store old MTU for live restore
+  local old_mtu
+  old_mtu="$(iface_mtu "$iface" || echo "")"
+  if [[ -n "$old_mtu" ]]; then
+    state_record_once "mtu_${iface}" "$old_mtu"
+    state_record_once "mtu_iface" "$iface"
+  fi
+
+  # Detect netplan/DHCP MTU overrides that may fight us on reboot
+  if [[ "$NET_STACK" == "netplan" ]] && [[ -d /etc/netplan ]]; then
+    if grep -RqsE 'mtu:[[:space:]]*[0-9]+' /etc/netplan/*.yaml 2>/dev/null; then
+      ui_warn "Netplan YAML already sets mtu — our .link may be overridden after reboot."
+    fi
+  fi
+  if [[ -r "/var/lib/dhcp/dhclient.${iface}.leases" ]] || [[ -d /run/systemd/netif/leases ]]; then
+    if grep -Rqs 'interface-mtu\|mtu' /run/systemd/netif/leases 2>/dev/null; then
+      ui_warn "DHCP may push an interface-mtu — live MTU can be overwritten on renew."
+    fi
+  fi
+
   # Live apply only (does not touch addressing)
   if ! ip link set dev "$iface" mtu "$mtu"; then
     return 1
@@ -170,6 +205,11 @@ apply_persistent_mtu() {
       local conn
       conn="$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | awk -F: -v d="$iface" '$2==d{print $1; exit}')"
       if [[ -n "$conn" ]]; then
+        local kf
+        for kf in "/etc/NetworkManager/system-connections/${conn}.nmconnection" \
+                  "/etc/NetworkManager/system-connections/${conn}"; do
+          [[ -f "$kf" ]] && backup_file "$kf"
+        done
         # Modify only — do NOT nmcli connection up (that flaps the NIC / can lose GW)
         nmcli connection modify "$conn" 802-3-ethernet.mtu "$mtu" 2>/dev/null \
           || nmcli connection modify "$conn" ethernet.mtu "$mtu" 2>/dev/null \
@@ -178,13 +218,10 @@ apply_persistent_mtu() {
           nmcli device reapply "$iface" >/dev/null 2>&1 || true
         fi
       fi
-      # Also write .link as boot-safe persistence
       _mtu_write_link_file "$iface" "$mtu"
       ;;
     *)
-      # netplan / networkd / ifupdown / unknown:
       # NEVER write netplan ethernets stubs — they can override cloud-init addressing.
-      # Persist with systemd .link + live apply only.
       _mtu_write_link_file "$iface" "$mtu"
       ;;
   esac
@@ -208,12 +245,36 @@ _dns_snapshot_save() {
   local snap
   snap="$(_dns_snapshot_dir)"
   mkdir -p "$snap"
-  [[ -f /etc/systemd/resolved.conf.d/99-securebox-dns.conf ]] \
-    && cp -a /etc/systemd/resolved.conf.d/99-securebox-dns.conf "$snap/" || true
-  [[ -f /etc/resolv.conf && ! -L /etc/resolv.conf ]] \
-    && cp -a /etc/resolv.conf "$snap/resolv.conf" || true
+  if [[ -f /etc/systemd/resolved.conf.d/99-securebox-dns.conf ]]; then
+    cp -a /etc/systemd/resolved.conf.d/99-securebox-dns.conf "$snap/" || true
+  fi
+  if [[ -f /etc/resolv.conf && ! -L /etc/resolv.conf ]]; then
+    cp -a /etc/resolv.conf "$snap/resolv.conf" || true
+  fi
   if have_cmd resolvectl && [[ -n "${NET_DEFAULT_IFACE:-}" ]]; then
     resolvectl dns "$NET_DEFAULT_IFACE" >"$snap/resolvectl-dns.txt" 2>/dev/null || true
+  fi
+  # NetworkManager profile snapshot for DNS rollback
+  if have_cmd nmcli && systemctl is-active --quiet NetworkManager 2>/dev/null; then
+    local conn
+    conn="$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | awk -F: -v d="${NET_DEFAULT_IFACE}" '$2==d{print $1; exit}')"
+    if [[ -z "$conn" ]]; then
+      conn="$(nmcli -t -f NAME connection show --active 2>/dev/null | head -n1)"
+    fi
+    if [[ -n "$conn" ]]; then
+      printf '%s\n' "$conn" >"$snap/nm-connection-name"
+      nmcli -g ipv4.dns,ipv4.ignore-auto-dns connection show "$conn" >"$snap/nm-dns.txt" 2>/dev/null || true
+      # Also backup the keyfile if present
+      local kf
+      for kf in "/etc/NetworkManager/system-connections/${conn}.nmconnection" \
+                "/etc/NetworkManager/system-connections/${conn}"; do
+        if [[ -f "$kf" ]]; then
+          backup_file "$kf"
+          cp -a "$kf" "$snap/nm-connection.backup" || true
+          break
+        fi
+      done
+    fi
   fi
 }
 
@@ -229,6 +290,32 @@ _dns_snapshot_restore() {
   fi
   if [[ -f "$snap/resolv.conf" && ! -L /etc/resolv.conf ]]; then
     cp -a "$snap/resolv.conf" /etc/resolv.conf
+  fi
+  # Restore NetworkManager DNS
+  if [[ -f "$snap/nm-connection-name" ]] && have_cmd nmcli; then
+    local conn dns_line ignore
+    conn="$(tr -d '[:space:]' <"$snap/nm-connection-name")"
+    if [[ -n "$conn" && -f "$snap/nm-dns.txt" ]]; then
+      dns_line="$(awk -F: '/^ipv4\.dns:/{print $2; exit}' "$snap/nm-dns.txt" 2>/dev/null \
+        || head -n1 "$snap/nm-dns.txt")"
+      ignore="$(awk -F: '/ignore-auto-dns/{print $2; exit}' "$snap/nm-dns.txt" 2>/dev/null || echo no)"
+      if [[ -n "$dns_line" ]]; then
+        nmcli connection modify "$conn" ipv4.dns "$dns_line" 2>/dev/null || true
+      else
+        nmcli connection modify "$conn" ipv4.dns "" 2>/dev/null || true
+      fi
+      nmcli connection modify "$conn" ipv4.ignore-auto-dns "${ignore:-no}" 2>/dev/null || true
+      if [[ -n "${NET_DEFAULT_IFACE:-}" ]]; then
+        nmcli device reapply "$NET_DEFAULT_IFACE" >/dev/null 2>&1 || true
+      fi
+    fi
+    if [[ -f "$snap/nm-connection.backup" ]]; then
+      local dest="/etc/NetworkManager/system-connections/${conn}.nmconnection"
+      if [[ -d /etc/NetworkManager/system-connections ]]; then
+        cp -a "$snap/nm-connection.backup" "$dest" 2>/dev/null || true
+        nmcli connection reload >/dev/null 2>&1 || true
+      fi
+    fi
   fi
   systemctl restart systemd-resolved >/dev/null 2>&1 || true
 }
