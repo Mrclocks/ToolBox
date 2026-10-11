@@ -200,19 +200,27 @@ ask_ssh() {
 
   SECUREBOX_ANSWERS[ssh_wait_confirm]=yes
 
-  # Password auth
+  local max_tries
+  ui_ask max_tries "MaxAuthTries (login attempts before disconnect)" "5"
+  if is_uint "$max_tries" && (( max_tries >= 1 && max_tries <= 20 )); then
+    SECUREBOX_ANSWERS[ssh_max_auth_tries]="$max_tries"
+  else
+    SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
+  fi
+
+  # Password auth — only offer disable if CURRENT login user has a usable key
   local has_key=0
-  if [[ -s /root/.ssh/authorized_keys ]] || find /home -maxdepth 3 -path '*/.ssh/authorized_keys' -size +0 2>/dev/null | grep -q .; then
+  if declare -F _ssh_user_has_usable_key >/dev/null 2>&1 && _ssh_user_has_usable_key; then
     has_key=1
   fi
   if (( has_key )); then
-    if ui_confirm "SSH keys detected. Disable password authentication?" "N"; then
+    if ui_confirm "Usable SSH key found for current login user. Disable password authentication?" "N"; then
       SECUREBOX_ANSWERS[ssh_password_auth]=no
     else
       SECUREBOX_ANSWERS[ssh_password_auth]=keep
     fi
   else
-    ui_warn "No SSH keys detected — password authentication will stay enabled."
+    ui_warn "No usable SSH key for current login user — password authentication will stay enabled."
     SECUREBOX_ANSWERS[ssh_password_auth]=keep
   fi
 
@@ -386,9 +394,11 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[ssh_wait_confirm]=no
   SECUREBOX_ANSWERS[ssh_password_auth]=keep
   SECUREBOX_ANSWERS[ssh_permit_root]=keep
+  SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
 
   # High-risk — NEVER auto-enable (UFW/IPv6 still asked below)
   SECUREBOX_ANSWERS[block_abuse]=no
+  SECUREBOX_ANSWERS[abuse_profile]=minimal
   SECUREBOX_ANSWERS[disable_ipv6]=no
   SECUREBOX_ANSWERS[ufw_enable]=no
   SECUREBOX_ANSWERS[ufw_reset]=no

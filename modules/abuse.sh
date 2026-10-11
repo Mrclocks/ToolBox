@@ -3,7 +3,6 @@
 # Applies ONLY when SECUREBOX_ANSWERS[block_abuse] is explicitly yes.
 # shellcheck shell=bash
 
-ABUSE_SET_NAME="securebox_abuse"
 ABUSE_RANGES_FILE="${SECUREBOX_DATA}/abuse-ranges.txt"
 ABUSE_RANGES_AGGRESSIVE="${SECUREBOX_DATA}/abuse-ranges-aggressive.txt"
 

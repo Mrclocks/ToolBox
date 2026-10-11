@@ -5,7 +5,9 @@
 
 # Files MrClock may create even when no prior copy existed
 RESTORE_MANAGED_PATHS=(
+  /etc/ssh/sshd_config.d/00-securebox.conf
   /etc/ssh/sshd_config.d/99-securebox.conf
+  /etc/systemd/system/ssh.socket.d/00-securebox.conf
   /etc/systemd/resolved.conf.d/99-securebox-dns.conf
   /etc/netplan/99-securebox-mtu.yaml
   /etc/netplan/99-securebox-dns.yaml
