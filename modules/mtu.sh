@@ -14,14 +14,14 @@ _mtu_apply_mss_clamp() {
     nft add rule inet securebox_mss forward tcp flags syn / syn,rst tcp option maxseg size set "$mss" 2>/dev/null \
       || nft add rule inet securebox_mss forward tcp flags syn tcp option maxseg size set "$mss" 2>/dev/null \
       || true
-    state_record_once "mss_clamp" "nft:${mss}"
+    state_record "mss_clamp" "nft:${mss}"
     return 0
   fi
   if have_cmd iptables; then
     iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$mss" 2>/dev/null \
       || iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$mss" 2>/dev/null \
       || true
-    state_record_once "mss_clamp" "iptables:${mss}"
+    state_record "mss_clamp" "iptables:${mss}"
     return 0
   fi
   return 1
@@ -91,10 +91,13 @@ module_mtu() {
       return 0
     fi
     # Arm timed rollback if requested
-    local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-0}"
-    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )); then
+    local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
       if declare -F schedule_timed_rollback >/dev/null 2>&1; then
         schedule_timed_rollback "mtu" "$rollback_secs" || true
+      fi
+      if ui_confirm "MTU applied — confirm connectivity still works (cancel auto-rollback)?" "Y"; then
+        cancel_timed_rollback "mtu" || true
       fi
     fi
     module_ok "mtu"
