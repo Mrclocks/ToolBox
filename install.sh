@@ -354,7 +354,10 @@ parse_args() {
       --fail2ban) SECUREBOX_CLI_FAIL2BAN=yes; shift ;;
       --unattended) SECUREBOX_CLI_UNATTENDED=yes; shift ;;
       --rollback-seconds)
-        [[ -n "${2-}" ]] && is_uint "$2" || { ui_error "--rollback-seconds requires a number"; exit 1; }
+        if [[ -z "${2-}" ]] || ! is_uint "$2"; then
+          ui_error "--rollback-seconds requires a number"
+          exit 1
+        fi
         SECUREBOX_ROLLBACK_SECONDS="$2"; shift 2 ;;
       --no-rollback) SECUREBOX_ROLLBACK_SECONDS=0; shift ;;
       --help|-h) usage; exit 0 ;;

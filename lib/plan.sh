@@ -47,7 +47,7 @@ preflight_checks() {
 
   ui_kv "Risk level" "$risk"
   ui_box_end
-  SECUREBOX_PREFLIGHT_RISK="$risk"
+  export SECUREBOX_PREFLIGHT_RISK="$risk"
 }
 
 show_plan_screen() {
@@ -55,7 +55,7 @@ show_plan_screen() {
   echo
   ui_box_start "Plan — what will change"
   local -a rows=()
-  local k v risk
+  local v risk
 
   if answered_yes do_update; then
     rows+=("medium|System update (full-upgrade)")

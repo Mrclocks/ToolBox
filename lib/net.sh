@@ -12,6 +12,7 @@ DNS_RESOLV_PATH="/etc/resolv.conf"
 DNS_CURRENT=()
 NETPLAN_FILE=""
 NETWORKD_FILE=""
+export NETPLAN_FILE NETWORKD_FILE
 
 detect_network_stack() {
   NET_DEFAULT_IFACE="$(default_iface || true)"

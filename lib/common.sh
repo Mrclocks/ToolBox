@@ -9,7 +9,7 @@ SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -r "${SECUREBOX_ROOT}/VERSION" ]]; then
   SECUREBOX_VERSION="$(tr -d '[:space:]' <"${SECUREBOX_ROOT}/VERSION")"
 fi
-SECUREBOX_VERSION="${SECUREBOX_VERSION:-0.1.4}"
+SECUREBOX_VERSION="${SECUREBOX_VERSION:-0.2.0}"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
 SECUREBOX_BACKUP_ROOT="${SECUREBOX_BACKUP_ROOT:-/var/backups/securebox}"
 SECUREBOX_LOG_DIR="${SECUREBOX_LOG_DIR:-/var/log/securebox}"
@@ -107,12 +107,14 @@ answered_no() {
 
 require_answer_yes() {
   # usage: require_answer_yes key module_name "human reason"
-  local key="$1" mod="$2" why="${3:-not explicitly enabled by user}"
+  local key="$1"
+  local mod="$2"
+  local why="${3:-not explicitly enabled by user}"
   if answered_yes "$key"; then
-    log INFO "Answer check OK: ${key}=${SECUREBOX_ANSWERS[$key]}"
+    log INFO "Answer check OK: ${mod}: ${key}=${SECUREBOX_ANSWERS[$key]}"
     return 0
   fi
-  log INFO "Answer check SKIP: ${key}='${SECUREBOX_ANSWERS[$key]:-}' (${why})"
+  log INFO "Answer check SKIP: ${mod}: ${key}='${SECUREBOX_ANSWERS[$key]:-}' (${why})"
   return 1
 }
 

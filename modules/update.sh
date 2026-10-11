@@ -28,7 +28,7 @@ module_update() {
 
   if [[ -f /var/run/reboot-required ]]; then
     ui_warn "A reboot is required to finish kernel/package upgrades."
-    SECUREBOX_ANSWERS[reboot_needed]=yes
+    SECUREBOX_ANSWERS["reboot_needed"]=yes
   fi
 
   module_ok "update"

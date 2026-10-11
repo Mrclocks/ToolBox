@@ -3,6 +3,8 @@
 # shellcheck shell=bash
 
 # Colors (safe when not a TTY) — orange theme
+# C_BLUE/C_CYAN/C_MAGENTA/C_WHITE kept for theme completeness / external callers
+# shellcheck disable=SC2034
 if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]]; then
   C_RESET=$'\033[0m'
   C_BOLD=$'\033[1m'

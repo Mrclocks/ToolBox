@@ -1,36 +1,58 @@
-# 🧡 MrClock ToolBox
+# MrClock ToolBox
 
-ایمن‌سازی سرور VPN — **Ubuntu 22–26** و **Debian 12–13**
+VPN hardening & optimization for **Ubuntu 22–26** and **Debian 12–13**.
 
-## 🚀 نصب
+## Install
 
 ```bash
 curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash
 ```
 
-بعدش فقط:
+Then:
 
 ```bash
 sudo mrclock
 ```
 
-## ✨ قابلیت‌ها
+## CLI
 
-- 🔄 آپدیت سیستم
-- 🌐 DNS با تست سرعت واقعی روی سرور تو
-- ⚡ BBR و تیونینگ شبکه
-- 🛡️ UFW + Fail2Ban + SSH
-- 🚫 بلاک رنج abuse *(اختیاری)*
-- 🔒 خاموش کردن IPv6 *(اختیاری)*
-- 🧹 پاک‌سازی لاگ Ubuntu / Docker
-- ♻️ بازگردانی تغییرات قبلی (DNS/MTU/SSH/UFW/…)
+```bash
+sudo mrclock --help
+sudo mrclock --one-click --ufw --ufw-ports "443 51820/udp" --fail2ban
+sudo mrclock --dry-run --one-click
+sudo mrclock --verify
+```
 
-گزینه ۱: **Automatic کم‌ریسک** (فقط UFW و IPv6؛ DNS/MTU دست‌نخورده) یا **Customize**.
-MTU/DNS هرگز IP یا gateway را بازنویسی نمی‌کنند.
+Notable flags: `--ssh-port`, `--mtu`, `--dns`, `--ufw` / `--no-ufw`, `--ufw-ports`,
+`--ufw-discover`, `--block-abuse`, `--abuse-profile`, `--disable-ipv6`,
+`--dry-run`, `--verify`, `--rollback-seconds`.
 
-## ⚠️ نکته
+## Features
 
-بعد از عوض کردن پورت SSH، اول از ترمینال جدید وصل شو — سشن فعلی را نبند.
+- Apply All: **Automatic (low-risk)** or **Customize** — Plan screen + preflight first
+- DNS (live dig benchmark), MTU (default keep / MSS clamp), BBR
+- UFW autopilot, SSH hardening (`00-securebox.conf`), Fail2Ban
+- Optional abuse CIDR block (minimal / aggressive profiles)
+- Optional IPv6 disable (refuses if your SSH session is IPv6)
+- Restore previous configs + live MTU/sysctl/services/UFW state
+- Verify module: `sshd -T`, `ss`, `resolvectl`, `ufw`, `tc`, sysctl
+- Timed auto-rollback for SSH/UFW/DNS/MTU unless you confirm
+
+Rule #1: never lock out the admin or cut connectivity.
+
+## Safety notes
+
+- After changing the SSH port, open a **new** terminal before closing the current session.
+- Automatic never enables abuse block or UFW without asking; keeps DNS/MTU by default.
+- Release archives ship `SHA256SUMS` (optional `.asc`); `install.sh` verifies when present.
+
+## Dev / CI
+
+```bash
+shellcheck -x install.sh lib/*.sh modules/*.sh
+bats -r tests
+./scripts/gen-checksums.sh
+```
 
 ---
 

@@ -310,7 +310,7 @@ module_ssh() {
     current="$(_ssh_current_port)"
     new_port="${SECUREBOX_ANSWERS[ssh_port]:-$current}"
   fi
-  SECUREBOX_ANSWERS[ssh_current_port]="$current"
+  SECUREBOX_ANSWERS["ssh_current_port"]="$current"
 
   # Password auth guard: only disable if login user has a usable key
   if [[ "${SECUREBOX_ANSWERS[ssh_password_auth]:-}" == "no" ]]; then

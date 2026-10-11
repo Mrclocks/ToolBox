@@ -1,0 +1,3 @@
+# Project shellcheck defaults — keep -x clean (warnings as errors in CI)
+# Associative-array keys look like unbound vars to shellcheck; prefer quoted keys.
+external-sources=true
