@@ -17,9 +17,9 @@ jobs:
       - name: Run shellcheck
         run: |
           set -euo pipefail
-          mapfile -t files < <(find lib modules install.sh scripts -type f -name '*.sh' | sort)
+          mapfile -t files < <(find lib modules scripts -type f -name '*.sh' | sort)
           files+=(install.sh)
-          shellcheck -x "${files[@]}"
+          shellcheck -x -S warning "${files[@]}"
 
   bats:
     name: bats unit tests

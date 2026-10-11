@@ -87,6 +87,9 @@ _securebox_install_persistent() {
   [[ -f "${src}/VERSION" ]] && cp -a "${src}/VERSION" "$SECUREBOX_INSTALL_DIR/VERSION" || true
   [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$SECUREBOX_INSTALL_DIR/LICENSE" || true
   [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$SECUREBOX_INSTALL_DIR/README.md" || true
+  [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$SECUREBOX_INSTALL_DIR/CHANGELOG.md" || true
+  [[ -f "${src}/SHA256SUMS" ]] && cp -a "${src}/SHA256SUMS" "$SECUREBOX_INSTALL_DIR/SHA256SUMS" || true
+  [[ -f "${src}/SHA256SUMS.asc" ]] && cp -a "${src}/SHA256SUMS.asc" "$SECUREBOX_INSTALL_DIR/SHA256SUMS.asc" || true
   chmod 755 "$SECUREBOX_INSTALL_DIR/install.sh"
   mkdir -p "$(dirname "$SECUREBOX_BIN_LINK")"
   cat >"$SECUREBOX_BIN_LINK" <<EOF
