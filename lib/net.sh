@@ -329,23 +329,12 @@ apply_dns_servers() {
 }
 
 disable_ipv6_persistent() {
+  # sysctl is enough — do NOT edit GRUB (ipv6.disable=1 is hard to undo and
+  # can surprise admins; sysctl covers the runtime + boot via /etc/sysctl.d).
   write_sysctl_dropin /etc/sysctl.d/99-securebox-disable-ipv6.conf \
     "net.ipv6.conf.all.disable_ipv6 = 1" \
     "net.ipv6.conf.default.disable_ipv6 = 1" \
     "net.ipv6.conf.lo.disable_ipv6 = 1"
-
-  # GRUB optional — does not affect IPv4 addressing
-  if [[ -f /etc/default/grub ]]; then
-    backup_file /etc/default/grub
-    if ! grep -q 'ipv6.disable=1' /etc/default/grub; then
-      sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub || true
-      if have_cmd update-grub; then
-        update-grub >/dev/null 2>&1 || true
-      elif have_cmd grub-mkconfig; then
-        grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
-      fi
-    fi
-  fi
 
   if [[ -f /etc/default/ufw ]]; then
     backup_file /etc/default/ufw
@@ -354,4 +343,5 @@ disable_ipv6_persistent() {
 
   sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
   sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+  sysctl -w net.ipv6.conf.lo.disable_ipv6=1 >/dev/null 2>&1 || true
 }
