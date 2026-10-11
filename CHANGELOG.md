@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2 — 2026-10-11
+
+### Fixed
+- **One-liner install**: release tarball now packs under `ToolBox-<tag>/` (0.2.1 was
+  flat → `archive layout unexpected` after checksum OK)
+- Bootstrap treats fetch failure as fatal (no more empty `Starting from` / `/install.sh`)
+- Extract accepts `ToolBox-*`, GitHub `Mrclocks-ToolBox-*`, or flat layout
+- `gen-checksums.sh` refuses to publish if `ToolBox-<tag>/lib/common.sh` is missing
+
 ## 0.2.1 — 2026-10-11
 
 ### Fixed

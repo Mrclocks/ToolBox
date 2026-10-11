@@ -199,7 +199,7 @@ _securebox_fetch_tree() {
         echo "[MrClock] ERROR: failed to download release archive." >&2
         echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
         rm -rf "$tmp"
-        exit 1
+        return 1
       }
     }
   fi
@@ -216,21 +216,41 @@ _securebox_fetch_tree() {
   # Fail-closed verify (missing sums ⇒ error unless SECUREBOX_ALLOW_INSECURE=1)
   _securebox_verify_release_assets "$archive" "$SECUREBOX_REF" "$sums_dir" || {
     rm -rf "$tmp"
-    exit 1
+    return 1
   }
 
   tar -xzf "$archive" -C "$tmp" || {
     echo "[MrClock] ERROR: failed to extract archive." >&2
     rm -rf "$tmp"
-    exit 1
+    return 1
   }
 
-  local extracted
-  extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'ToolBox-*' | head -n1)"
+  local extracted="" d
+  # Preferred: ToolBox-<tag>/ (release asset). Also GitHub source zip / flat layout.
+  while IFS= read -r d; do
+    if _securebox_have_tree "$d"; then
+      extracted="$d"
+      break
+    fi
+  done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d \( -name 'ToolBox-*' -o -name 'Mrclocks-ToolBox-*' \) 2>/dev/null | sort)
+
+  if [[ -z "$extracted" ]] && _securebox_have_tree "$tmp"; then
+    extracted="$tmp"
+  fi
+
+  if [[ -z "$extracted" ]]; then
+    while IFS= read -r d; do
+      if _securebox_have_tree "$d"; then
+        extracted="$d"
+        break
+      fi
+    done < <(find "$tmp" -mindepth 1 -maxdepth 3 -type d -name lib 2>/dev/null | while read -r libdir; do dirname "$libdir"; done)
+  fi
+
   if [[ -z "$extracted" ]] || ! _securebox_have_tree "$extracted"; then
     echo "[MrClock] ERROR: archive layout unexpected." >&2
     rm -rf "$tmp"
-    exit 1
+    return 1
   fi
 
   printf '%s\n' "$extracted"
@@ -265,12 +285,24 @@ _securebox_bootstrap() {
   # 2) One-liner / bare install.sh: ALWAYS fetch latest and refresh /opt
   #    (do not reuse a stale /opt copy — that caused old DNS bugs to stick around)
   local extracted
-  extracted="$(_securebox_fetch_tree)"
+  # NOTE: exit inside $() only kills the subshell — must check status here.
+  if ! extracted="$(_securebox_fetch_tree)"; then
+    echo "[MrClock] ERROR: could not download a usable ToolBox tree." >&2
+    exit 1
+  fi
+  if [[ -z "$extracted" ]] || ! _securebox_have_tree "$extracted"; then
+    echo "[MrClock] ERROR: fetched tree incomplete at '${extracted:-<empty>}'." >&2
+    exit 1
+  fi
   _securebox_install_persistent "$extracted" || true
   export SECUREBOX_BOOTSTRAPPED=1
   export SECUREBOX_ROOT="${SECUREBOX_INSTALL_DIR}"
   if ! _securebox_have_tree "$SECUREBOX_ROOT"; then
     SECUREBOX_ROOT="$extracted"
+  fi
+  if [[ -z "$SECUREBOX_ROOT" ]] || [[ ! -f "${SECUREBOX_ROOT}/install.sh" ]]; then
+    echo "[MrClock] ERROR: install.sh missing under ${SECUREBOX_ROOT:-<empty>}." >&2
+    exit 1
   fi
   echo "[MrClock] Starting from ${SECUREBOX_ROOT}" >&2
   exec bash "${SECUREBOX_ROOT}/install.sh" "$@"

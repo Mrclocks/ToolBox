@@ -26,13 +26,15 @@ mkdir -p "$OUTDIR"
 cp -a install.sh "${OUTDIR}/install.sh"
 
 ARCHIVE_NAME="ToolBox-${ASSET_TAG}.tar.gz"
-# Build a release tarball of the tree (exclude .git / dist / local state)
-tar --exclude='.git' --exclude='dist' --exclude='SHA256SUMS' --exclude='SHA256SUMS.asc' \
-  -czf "${OUTDIR}/${ARCHIVE_NAME}" \
-  -C "$ROOT" \
-  install.sh VERSION LICENSE README.md CHANGELOG.md \
-  lib modules data scripts tests .shellcheckrc .github 2>/dev/null \
-  || tar --exclude='.git' --exclude='dist' -czf "${OUTDIR}/${ARCHIVE_NAME}" -C "$ROOT" .
+# Pack under ToolBox-<tag>/ so install.sh finds a ToolBox-* root after extract.
+# Flat tarballs break the one-liner with "archive layout unexpected".
+STAGE="${OUTDIR}/stage/ToolBox-${ASSET_TAG}"
+mkdir -p "$STAGE"
+tar --exclude='./.git' --exclude='./dist' --exclude='./SHA256SUMS' --exclude='./SHA256SUMS.asc' \
+  --exclude='./.cursor' \
+  -C "$ROOT" -cf - . | tar -C "$STAGE" -xf -
+tar -czf "${OUTDIR}/${ARCHIVE_NAME}" -C "${OUTDIR}/stage" "ToolBox-${ASSET_TAG}"
+rm -rf "${OUTDIR}/stage"
 
 (
   cd "$OUTDIR"
@@ -40,6 +42,15 @@ tar --exclude='.git' --exclude='dist' --exclude='SHA256SUMS' --exclude='SHA256SU
   echo "Wrote ${OUTDIR}/SHA256SUMS"
   cat SHA256SUMS
 )
+
+# Sanity: archive must contain ToolBox-<tag>/lib/common.sh
+# (Avoid `tar | grep` under pipefail — SIGPIPE from early grep exit looks like failure.)
+listing="$(tar -tzf "${OUTDIR}/${ARCHIVE_NAME}")"
+if ! grep -qx "ToolBox-${ASSET_TAG}/lib/common.sh" <<<"$listing"; then
+  echo "ERROR: packed archive missing ToolBox-${ASSET_TAG}/lib/common.sh" >&2
+  head -n 20 <<<"$listing" >&2
+  exit 1
+fi
 
 echo
 echo "Publish these as GitHub Release assets (separate from source zip):"
