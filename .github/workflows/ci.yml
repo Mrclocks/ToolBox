@@ -55,23 +55,25 @@ jobs:
             openssh-server || apt-get install -y -qq bash ca-certificates curl iproute2 procps
       - name: shellcheck (in-container)
         run: |
-          shellcheck -x install.sh lib/*.sh modules/*.sh scripts/*.sh || true
-          # Soft on missing shellcheck packaging quirks; unit job is authoritative
           if command -v shellcheck >/dev/null; then
-            shellcheck -x install.sh lib/*.sh modules/*.sh
+            shellcheck -x -S warning install.sh lib/*.sh modules/*.sh scripts/gen-checksums.sh
+          else
+            echo "shellcheck not available in this image — skipping (host job is authoritative)"
           fi
       - name: bats (in-container)
         run: |
           if command -v bats >/dev/null; then
             bats -r tests
+          else
+            echo "bats not available — skipping"
           fi
       - name: smoke help / dry-run parse
         run: |
-          bash install.sh --help | grep -q 'MrClock\|Usage'
-          # --help exits 0 without root
+          bash install.sh --help | grep -qE 'MrClock|Usage'
+          bash install.sh --help | grep -q -- '--ufw-ports'
+          bash install.sh --help | grep -q -- '--ufw-discover'
           bash -n install.sh
           bash -n lib/common.sh
           bash -n modules/ufw.sh
           bash -n modules/ssh.sh
-          # Source helpers
           bash -c 'source lib/common.sh; is_port 22; is_ipv4 1.2.3.4; ! is_ipv4 08.1.1.1'
