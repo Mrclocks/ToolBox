@@ -130,12 +130,77 @@ is_port() {
   is_uint "${1-}" && (( $1 >= 1 && $1 <= 65535 ))
 }
 
+# Single port or UFW-style range (e.g. 1000:2000)
+is_port_spec() {
+  local p="${1-}"
+  if [[ "$p" == *:* ]]; then
+    local a="${p%%:*}" b="${p#*:}"
+    is_port "$a" && is_port "$b" && (( a <= b ))
+  else
+    is_port "$p"
+  fi
+}
+
 is_ipv4() {
   local ip="${1-}"
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
   local IFS=.
   read -r a b c d <<<"$ip"
   (( a <= 255 && b <= 255 && c <= 255 && d <= 255 ))
+}
+
+# Detect live SSH listen ports: SSH_CONNECTION, ss (sshd), then sshd_config.
+# Prints one port per line.
+detect_live_ssh_ports() {
+  local -A seen=()
+  local p
+
+  # Current session destination port (most reliable for the admin)
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    # SSH_CONNECTION: client_ip client_port server_ip server_port
+    p="$(awk '{print $4}' <<<"$SSH_CONNECTION")"
+    if is_port "$p"; then
+      seen["$p"]=1
+    fi
+  fi
+
+  # Listening sshd sockets
+  if have_cmd ss; then
+    while read -r line; do
+      [[ -z "$line" ]] && continue
+      # Prefer lines mentioning sshd
+      if [[ "$line" != *sshd* && "$line" != *"/ssh"* ]]; then
+        continue
+      fi
+      local addr
+      addr="$(awk '{print $4}' <<<"$line")"
+      if [[ "$addr" == \[*\]* ]]; then
+        p="${addr##*]:}"
+      else
+        p="${addr##*:}"
+      fi
+      is_port "$p" && seen["$p"]=1
+    done < <(ss -tlnp 2>/dev/null || true)
+  fi
+
+  # Configured ports (sshd_config + drop-ins) — first Port wins per OpenSSH, but list all
+  if declare -F _ssh_current_port >/dev/null 2>&1; then
+    p="$(_ssh_current_port 2>/dev/null || true)"
+    is_port "$p" && seen["$p"]=1
+  fi
+  if [[ -f /etc/ssh/sshd_config ]]; then
+    while read -r p; do
+      is_port "$p" && seen["$p"]=1
+    done < <(awk '/^[Pp]ort[[:space:]]+[0-9]+/{print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null)
+  fi
+
+  if ((${#seen[@]} == 0)); then
+    echo 22
+    return 0
+  fi
+  for p in "${!seen[@]}"; do
+    printf '%s\n' "$p"
+  done | sort -n
 }
 
 is_cidr_v4() {
