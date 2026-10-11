@@ -102,10 +102,22 @@ ask_dns() {
 }
 
 ask_logs() {
-  if ui_confirm "Clean Ubuntu journal/logs + Docker logs to free disk?" "Y"; then
+  if ui_confirm "Clean Ubuntu journal/rotated logs + Docker JSON logs to free disk?" "N"; then
     SECUREBOX_ANSWERS[do_logs]=yes
+    if ui_confirm "Also truncate large active logs (auth.log/syslog/fail2ban.log)?" "N"; then
+      SECUREBOX_ANSWERS[logs_truncate_active]=yes
+    else
+      SECUREBOX_ANSWERS[logs_truncate_active]=no
+    fi
+    if ui_confirm "Also run docker system prune -f (removes stopped containers)?" "N"; then
+      SECUREBOX_ANSWERS[logs_docker_prune]=yes
+    else
+      SECUREBOX_ANSWERS[logs_docker_prune]=no
+    fi
   else
     SECUREBOX_ANSWERS[do_logs]=no
+    SECUREBOX_ANSWERS[logs_truncate_active]=no
+    SECUREBOX_ANSWERS[logs_docker_prune]=no
   fi
 }
 
@@ -365,18 +377,21 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[apply_mode]=auto
   SECUREBOX_ANSWERS[continue_on_error]=yes
 
-  # Safe always-on
-  SECUREBOX_ANSWERS[do_update]=yes
+  # Truly low-risk defaults — ask or skip higher-impact steps
+  SECUREBOX_ANSWERS[do_update]=no
   SECUREBOX_ANSWERS[do_timesync]=yes
   SECUREBOX_ANSWERS[do_bbr]=yes
-  SECUREBOX_ANSWERS[do_logs]=yes
+  SECUREBOX_ANSWERS[do_logs]=no
+  SECUREBOX_ANSWERS[logs_truncate_active]=no
+  SECUREBOX_ANSWERS[logs_docker_prune]=no
   SECUREBOX_ANSWERS[enable_fail2ban]=yes
   SECUREBOX_ANSWERS[f2b_bantime]=1h
   SECUREBOX_ANSWERS[f2b_findtime]=10m
   SECUREBOX_ANSWERS[f2b_maxretry]=4
   SECUREBOX_ANSWERS[unattended]=yes
   SECUREBOX_ANSWERS[unattended_reboot]=no
-  SECUREBOX_ANSWERS[disable_unused]=yes
+  # Masking services is not low-risk — skip unless Customize
+  SECUREBOX_ANSWERS[disable_unused]=no
   SECUREBOX_ANSWERS[disable_snapd]=no
 
   # Keep current DNS/MTU — changing them has cut connectivity on some VPS
@@ -385,7 +400,7 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[mtu]=keep
   ui_info "Auto: keeping current DNS and MTU (safest for connectivity)"
 
-  # SSH harden, port unchanged
+  # SSH harden lightly, port unchanged
   local cur
   cur="$(_ssh_current_port 2>/dev/null || echo 22)"
   SECUREBOX_ANSWERS[do_ssh]=yes
@@ -418,6 +433,18 @@ questionnaire_all() {
   case "$mode" in
     1)
       defaults_auto_all
+      ui_step "Automatic — optional higher-impact steps (default skip)"
+      if ui_confirm "Run apt full-upgrade as part of Automatic?" "N"; then
+        SECUREBOX_ANSWERS[do_update]=yes
+      fi
+      if ui_confirm "Clean journal/rotated logs (never docker prune / never truncate auth.log)?" "N"; then
+        SECUREBOX_ANSWERS[do_logs]=yes
+        SECUREBOX_ANSWERS[logs_truncate_active]=no
+        SECUREBOX_ANSWERS[logs_docker_prune]=no
+      fi
+      if ui_confirm "Disable unused services (avahi/cups/… — masks units)?" "N"; then
+        SECUREBOX_ANSWERS[disable_unused]=yes
+      fi
       ui_step "Automatic needs two decisions (can cut access if wrong)"
       ask_ipv6
       ask_ufw

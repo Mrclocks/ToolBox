@@ -41,12 +41,17 @@ _logs_clean_journal() {
 
 _logs_clean_rotated() {
   ui_info "Removing rotated / compressed /var/log archives..."
+  # Quiet delete — do not flood the TTY with find -print paths
   find /var/log -type f \( \
       -name '*.gz' -o -name '*.xz' -o -name '*.bz2' \
       -o -name '*.old' -o -name '*.1' -o -name '*.2' -o -name '*.3' \
       -o -name '*.4' -o -name '*.5' -o -name '*.6' -o -name '*.7' \
-    \) -print -delete 2>/dev/null || true
-  # Truncate huge active text logs that grow forever (keep file inode for daemons)
+    \) -delete 2>/dev/null || true
+
+  # Truncate huge active text logs ONLY when explicitly requested
+  if ! answered_yes logs_truncate_active; then
+    return 0
+  fi
   local f
   for f in /var/log/syslog /var/log/messages /var/log/kern.log /var/log/auth.log \
            /var/log/daemon.log /var/log/ufw.log /var/log/fail2ban.log; do
@@ -88,10 +93,12 @@ _logs_clean_docker() {
     ui_info "No Docker container JSON logs found"
   fi
 
-  # Unused dangling images/build cache can be huge — only prune dangling, not volumes
-  if have_cmd docker && docker info >/dev/null 2>&1; then
-    ui_info "Pruning dangling Docker data (images/containers/networks — not volumes)..."
-    docker system prune -f >/dev/null 2>&1 || true
+  # NEVER prune by default — that removes stopped containers
+  if answered_yes logs_docker_prune; then
+    if have_cmd docker && docker info >/dev/null 2>&1; then
+      ui_warn "docker system prune -f (explicit opt-in) — may remove stopped containers"
+      docker system prune -f >/dev/null 2>&1 || true
+    fi
   fi
 }
 
