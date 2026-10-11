@@ -13,6 +13,7 @@ RESTORE_MANAGED_PATHS=(
   /etc/netplan/99-securebox-dns.yaml
   /etc/sysctl.d/99-securebox-bbr-network.conf
   /etc/sysctl.d/99-securebox-disable-ipv6.conf
+  /etc/modules-load.d/securebox-nf-conntrack.conf
   /etc/fail2ban/jail.d/securebox.conf
   /etc/nftables.d/securebox-abuse.nft
   /etc/apt/apt.conf.d/20auto-upgrades
@@ -328,9 +329,10 @@ module_restore() {
   ui_info "Using backup run: ${run_id}"
   _restore_preview "$backup_root"
 
-  # Safety: new backup run id for current state before we overwrite
-  # (SECUREBOX_RUN_ID already unique for this process)
-  record_backup_run
+  # Safety snapshot of current files — marked so it is NEVER the recommended restore target
+  mkdir -p "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  touch "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}/.restore_safety"
+  # Do not call record_backup_run here — that would make safety the "recommended" run
   ui_info "Safety snapshot of current files → ${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
 
   local restored=0 removed=0
@@ -360,6 +362,7 @@ module_restore() {
     fi
   fi
 
+  _restore_live_state
   _restore_reload_services
 
   # Clear pending SSH cutover state
@@ -367,7 +370,6 @@ module_restore() {
         "${SECUREBOX_STATE_DIR}/ssh_old_port" \
         "${SECUREBOX_STATE_DIR}/ssh_new_port" 2>/dev/null || true
 
-  record_backup_run
   module_ok "restore"
   ui_success "Restore complete from ${run_id} — restored ${restored} file(s), removed ${removed}"
   ui_warn "Package upgrades / deleted logs are NOT reverted (by design)."

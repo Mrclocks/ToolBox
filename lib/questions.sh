@@ -5,15 +5,9 @@
 declare -A SECUREBOX_ANSWERS=()
 
 recommend_mtu() {
-  # Prefer VPN-friendly default slightly under 1500 to reduce fragmentation
+  # Default recommendation = keep current (safest for connectivity)
   local cur="${NET_DEFAULT_MTU:-1500}"
-  if (( cur > 1500 )); then
-    echo 1500
-  elif (( cur == 1500 )); then
-    echo 1400
-  else
-    echo "$cur"
-  fi
+  echo "keep:${cur}"
 }
 
 recommend_ssh_port() {
@@ -122,30 +116,33 @@ ask_logs() {
 }
 
 ask_mtu() {
-  local rec
-  rec="$(recommend_mtu)"
+  local cur="${NET_DEFAULT_MTU:-1500}"
   echo
-  ui_info "Default interface: ${NET_DEFAULT_IFACE:-unknown} (current MTU ${NET_DEFAULT_MTU:-?})"
+  ui_info "Default interface: ${NET_DEFAULT_IFACE:-unknown} (current MTU ${cur})"
   local choice
   ui_menu choice "MTU policy" \
-    "Recommended VPN-friendly (${rec})" \
+    "Keep current MTU (recommended)" \
     "Standard Ethernet (1500)" \
     "WireGuard-ish (1420)" \
     "Conservative (1400)" \
     "Safe minimum (1280)" \
-    "Keep current MTU" \
-    "Custom value"
+    "Custom MTU value" \
+    "Keep MTU + enable TCP MSS clamping (iptables/nft alternative)"
+  SECUREBOX_ANSWERS[mtu_mss_clamp]=no
   case "$choice" in
-    1) SECUREBOX_ANSWERS[mtu]="$rec" ;;
+    1) SECUREBOX_ANSWERS[mtu]=keep ;;
     2) SECUREBOX_ANSWERS[mtu]=1500 ;;
     3) SECUREBOX_ANSWERS[mtu]=1420 ;;
     4) SECUREBOX_ANSWERS[mtu]=1400 ;;
     5) SECUREBOX_ANSWERS[mtu]=1280 ;;
-    6) SECUREBOX_ANSWERS[mtu]=keep ;;
-    7)
+    6)
       local m
-      ui_ask_mtu m "Enter MTU" "$rec"
+      ui_ask_mtu m "Enter MTU" "$cur"
       SECUREBOX_ANSWERS[mtu]="$m"
+      ;;
+    7)
+      SECUREBOX_ANSWERS[mtu]=keep
+      SECUREBOX_ANSWERS[mtu_mss_clamp]=yes
       ;;
   esac
 }
@@ -169,8 +166,21 @@ ask_timesync() {
 ask_bbr() {
   if ui_confirm "Apply BBR + network tuning?" "Y"; then
     SECUREBOX_ANSWERS[do_bbr]=yes
+    local has_vpn=0
+    if ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^(wg|tun|tap)/{found=1} END{exit found?0:1}'; then
+      has_vpn=1
+    fi
+    if (( has_vpn )); then
+      ui_info "VPN interfaces (wg*/tun*) detected — ip_forward will be enabled automatically."
+      SECUREBOX_ANSWERS[bbr_ip_forward]=yes
+    elif ui_confirm "Also enable IPv4 forwarding (needed for VPN gateways)?" "N"; then
+      SECUREBOX_ANSWERS[bbr_ip_forward]=yes
+    else
+      SECUREBOX_ANSWERS[bbr_ip_forward]=no
+    fi
   else
     SECUREBOX_ANSWERS[do_bbr]=no
+    SECUREBOX_ANSWERS[bbr_ip_forward]=no
   fi
 }
 

@@ -396,9 +396,17 @@ apply_dns_servers() {
       ;;
   esac
 
-  # Validate resolution; rollback on failure
+  # Validate: dig @newserver must succeed (not only getent via old cache)
   local ok=0
-  if have_cmd getent; then
+  if have_cmd dig || apt_install_safe dnsutils >/dev/null 2>&1; then
+    if dig +time=3 +tries=1 @"$primary" cloudflare.com A +short >/dev/null 2>&1 \
+       || dig +time=3 +tries=1 @"$primary" google.com A +short >/dev/null 2>&1; then
+      ok=1
+    else
+      ui_warn "dig @${primary} failed"
+    fi
+  fi
+  if (( ! ok )) && have_cmd getent; then
     getent hosts cloudflare.com >/dev/null 2>&1 && ok=1
     getent hosts google.com >/dev/null 2>&1 && ok=1
   fi
@@ -407,6 +415,41 @@ apply_dns_servers() {
     _dns_snapshot_restore
     return 1
   fi
+
+  # Verify effective resolver (systemd-resolved / NM)
+  if have_cmd resolvectl; then
+    local status_out
+    status_out="$(resolvectl status 2>/dev/null || true)"
+    if [[ -n "$status_out" ]]; then
+      if ! grep -Eq "${primary//./\\.}" <<<"$status_out"; then
+        case "$DNS_MANAGER" in
+          systemd-resolved|NetworkManager)
+            ui_warn "resolvectl status does not show ${primary} — DNS may not have taken effect"
+            # For static/resolvconf paths this is less authoritative; for resolved/NM fail
+            if [[ "$DNS_MANAGER" == "systemd-resolved" ]]; then
+              ui_error "Effective resolver missing new DNS — rolling back"
+              _dns_snapshot_restore
+              return 1
+            fi
+            ;;
+        esac
+      else
+        ui_info "resolvectl confirms upstream ${primary}"
+      fi
+    fi
+  fi
+
+  # static-resolv / resolvconf: require nameserver line present
+  case "$DNS_MANAGER" in
+    static-resolv|resolvconf)
+      if [[ -f /etc/resolv.conf ]] && ! grep -Eq "^nameserver[[:space:]]+${primary//./\\.}" /etc/resolv.conf; then
+        ui_error "resolv.conf does not contain ${primary} — rolling back"
+        _dns_snapshot_restore
+        return 1
+      fi
+      ;;
+  esac
+
   if ! network_has_default_route; then
     ui_warn "Default route missing after DNS change — rolling back"
     _dns_snapshot_restore
