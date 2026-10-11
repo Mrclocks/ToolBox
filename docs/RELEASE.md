@@ -7,7 +7,8 @@ attacker who swaps the archive can swap the checksums too.
 
 For each GitHub Release tag:
 
-1. `./scripts/gen-checksums.sh` (optionally `RELEASE_TAG=0.2.1`)
+1. `./scripts/gen-checksums.sh` (optionally `RELEASE_TAG=0.2.2`)
+   — tarball **must** contain `ToolBox-<tag>/lib/...` (not a flat root)
 2. Sign: `cd dist && gpg --detach-sign -a -o SHA256SUMS.asc SHA256SUMS`
 3. Upload as **separate Release assets**:
    - `install.sh`
