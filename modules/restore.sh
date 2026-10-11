@@ -5,12 +5,15 @@
 
 # Files MrClock may create even when no prior copy existed
 RESTORE_MANAGED_PATHS=(
+  /etc/ssh/sshd_config.d/00-securebox.conf
   /etc/ssh/sshd_config.d/99-securebox.conf
+  /etc/systemd/system/ssh.socket.d/00-securebox.conf
   /etc/systemd/resolved.conf.d/99-securebox-dns.conf
   /etc/netplan/99-securebox-mtu.yaml
   /etc/netplan/99-securebox-dns.yaml
   /etc/sysctl.d/99-securebox-bbr-network.conf
   /etc/sysctl.d/99-securebox-disable-ipv6.conf
+  /etc/modules-load.d/securebox-nf-conntrack.conf
   /etc/fail2ban/jail.d/securebox.conf
   /etc/nftables.d/securebox-abuse.nft
   /etc/apt/apt.conf.d/20auto-upgrades
@@ -32,20 +35,100 @@ _restore_list_runs() {
 
 _restore_pick_default_run() {
   local r
+  # Prefer last_recommended_run — never the restore's own safety snapshot
+  if [[ -r "${SECUREBOX_STATE_DIR}/last_recommended_run" ]]; then
+    r="$(tr -d '[:space:]' <"${SECUREBOX_STATE_DIR}/last_recommended_run")"
+    if [[ -n "$r" && "$r" != "$SECUREBOX_RUN_ID" && -d "${SECUREBOX_BACKUP_ROOT}/${r}" ]]; then
+      # Skip runs that look like restore safety snapshots
+      if [[ ! -f "${SECUREBOX_BACKUP_ROOT}/${r}/.restore_safety" ]]; then
+        printf '%s\n' "$r"
+        return 0
+      fi
+    fi
+  fi
   if [[ -r "${SECUREBOX_STATE_DIR}/last_backup_run" ]]; then
     r="$(tr -d '[:space:]' <"${SECUREBOX_STATE_DIR}/last_backup_run")"
     if [[ -n "$r" && "$r" != "$SECUREBOX_RUN_ID" && -d "${SECUREBOX_BACKUP_ROOT}/${r}" ]]; then
-      printf '%s\n' "$r"
-      return 0
+      if [[ ! -f "${SECUREBOX_BACKUP_ROOT}/${r}/.restore_safety" ]]; then
+        printf '%s\n' "$r"
+        return 0
+      fi
     fi
   fi
   while IFS= read -r r; do
     [[ -z "$r" || "$r" == "$SECUREBOX_RUN_ID" ]] && continue
     [[ -d "${SECUREBOX_BACKUP_ROOT}/${r}" ]] || continue
+    [[ -f "${SECUREBOX_BACKUP_ROOT}/${r}/.restore_safety" ]] && continue
     printf '%s\n' "$r"
     return 0
   done < <(_restore_list_runs)
   return 1
+}
+
+_restore_live_state() {
+  # Revert live runtime state recorded before MrClock changes
+  ui_info "Reverting live runtime state (MTU / sysctl / services / UFW)..."
+
+  # MTU
+  local iface old_mtu
+  iface="$(state_get mtu_iface 2>/dev/null || true)"
+  if [[ -n "$iface" ]]; then
+    old_mtu="$(state_get "mtu_${iface}" 2>/dev/null || true)"
+    if [[ -n "$old_mtu" ]] && is_uint "$old_mtu"; then
+      if ip link set dev "$iface" mtu "$old_mtu" 2>/dev/null; then
+        ui_success "Restored live MTU ${old_mtu} on ${iface}"
+      else
+        ui_warn "Could not restore live MTU on ${iface}"
+      fi
+    fi
+  fi
+
+  # sysctl
+  local keyfile key val
+  if [[ -d "${SECUREBOX_STATE_DIR}/sysctl" ]]; then
+    for keyfile in "${SECUREBOX_STATE_DIR}/sysctl/"*; do
+      [[ -f "$keyfile" ]] || continue
+      key="$(basename "$keyfile")"
+      val="$(tr -d '[:space:]' <"$keyfile")"
+      [[ -n "$val" ]] || continue
+      if sysctl -w "${key}=${val}" >/dev/null 2>&1; then
+        ui_info "sysctl restored: ${key}=${val}"
+      fi
+    done
+  fi
+
+  # Services — unmask / re-enable what we masked
+  local sf svc
+  if [[ -d "${SECUREBOX_STATE_DIR}/services" ]]; then
+    for sf in "${SECUREBOX_STATE_DIR}/services/"*.state; do
+      [[ -f "$sf" ]] || continue
+      svc="$(basename "$sf" .state)"
+      local was_masked was_enabled was_active
+      was_masked="$(awk -F= '/^masked=/{print $2}' "$sf")"
+      was_enabled="$(awk -F= '/^enabled=/{print $2}' "$sf")"
+      was_active="$(awk -F= '/^active=/{print $2}' "$sf")"
+      if [[ "$was_masked" != "yes" ]]; then
+        systemctl unmask "$svc" >/dev/null 2>&1 || true
+      fi
+      if [[ "$was_enabled" == "yes" ]]; then
+        systemctl enable "$svc" >/dev/null 2>&1 || true
+      fi
+      if [[ "$was_active" == "yes" ]]; then
+        systemctl start "$svc" >/dev/null 2>&1 || true
+      fi
+      ui_info "Service restore attempted: ${svc}"
+    done
+  fi
+
+  # UFW — disable if it was previously disabled
+  local ufw_was
+  ufw_was="$(state_get ufw_was_enabled 2>/dev/null || true)"
+  if [[ "$ufw_was" == "no" ]] && have_cmd ufw; then
+    if ufw status 2>/dev/null | grep -qi 'Status: active'; then
+      ui_warn "UFW was disabled before MrClock — disabling it again after restore"
+      ufw --force disable >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 _restore_file_from_backup() {
@@ -246,9 +329,10 @@ module_restore() {
   ui_info "Using backup run: ${run_id}"
   _restore_preview "$backup_root"
 
-  # Safety: new backup run id for current state before we overwrite
-  # (SECUREBOX_RUN_ID already unique for this process)
-  record_backup_run
+  # Safety snapshot of current files — marked so it is NEVER the recommended restore target
+  mkdir -p "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  touch "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}/.restore_safety"
+  # Do not call record_backup_run here — that would make safety the "recommended" run
   ui_info "Safety snapshot of current files → ${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
 
   local restored=0 removed=0
@@ -278,6 +362,7 @@ module_restore() {
     fi
   fi
 
+  _restore_live_state
   _restore_reload_services
 
   # Clear pending SSH cutover state
@@ -285,7 +370,6 @@ module_restore() {
         "${SECUREBOX_STATE_DIR}/ssh_old_port" \
         "${SECUREBOX_STATE_DIR}/ssh_new_port" 2>/dev/null || true
 
-  record_backup_run
   module_ok "restore"
   ui_success "Restore complete from ${run_id} — restored ${restored} file(s), removed ${removed}"
   ui_warn "Package upgrades / deleted logs are NOT reverted (by design)."

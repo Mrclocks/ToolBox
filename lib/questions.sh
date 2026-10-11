@@ -5,15 +5,9 @@
 declare -A SECUREBOX_ANSWERS=()
 
 recommend_mtu() {
-  # Prefer VPN-friendly default slightly under 1500 to reduce fragmentation
+  # Default recommendation = keep current (safest for connectivity)
   local cur="${NET_DEFAULT_MTU:-1500}"
-  if (( cur > 1500 )); then
-    echo 1500
-  elif (( cur == 1500 )); then
-    echo 1400
-  else
-    echo "$cur"
-  fi
+  echo "keep:${cur}"
 }
 
 recommend_ssh_port() {
@@ -102,38 +96,53 @@ ask_dns() {
 }
 
 ask_logs() {
-  if ui_confirm "Clean Ubuntu journal/logs + Docker logs to free disk?" "Y"; then
+  if ui_confirm "Clean Ubuntu journal/rotated logs + Docker JSON logs to free disk?" "N"; then
     SECUREBOX_ANSWERS[do_logs]=yes
+    if ui_confirm "Also truncate large active logs (auth.log/syslog/fail2ban.log)?" "N"; then
+      SECUREBOX_ANSWERS[logs_truncate_active]=yes
+    else
+      SECUREBOX_ANSWERS[logs_truncate_active]=no
+    fi
+    if ui_confirm "Also run docker system prune -f (removes stopped containers)?" "N"; then
+      SECUREBOX_ANSWERS[logs_docker_prune]=yes
+    else
+      SECUREBOX_ANSWERS[logs_docker_prune]=no
+    fi
   else
     SECUREBOX_ANSWERS[do_logs]=no
+    SECUREBOX_ANSWERS[logs_truncate_active]=no
+    SECUREBOX_ANSWERS[logs_docker_prune]=no
   fi
 }
 
 ask_mtu() {
-  local rec
-  rec="$(recommend_mtu)"
+  local cur="${NET_DEFAULT_MTU:-1500}"
   echo
-  ui_info "Default interface: ${NET_DEFAULT_IFACE:-unknown} (current MTU ${NET_DEFAULT_MTU:-?})"
+  ui_info "Default interface: ${NET_DEFAULT_IFACE:-unknown} (current MTU ${cur})"
   local choice
   ui_menu choice "MTU policy" \
-    "Recommended VPN-friendly (${rec})" \
+    "Keep current MTU (recommended)" \
     "Standard Ethernet (1500)" \
     "WireGuard-ish (1420)" \
     "Conservative (1400)" \
     "Safe minimum (1280)" \
-    "Keep current MTU" \
-    "Custom value"
+    "Custom MTU value" \
+    "Keep MTU + enable TCP MSS clamping (iptables/nft alternative)"
+  SECUREBOX_ANSWERS[mtu_mss_clamp]=no
   case "$choice" in
-    1) SECUREBOX_ANSWERS[mtu]="$rec" ;;
+    1) SECUREBOX_ANSWERS[mtu]=keep ;;
     2) SECUREBOX_ANSWERS[mtu]=1500 ;;
     3) SECUREBOX_ANSWERS[mtu]=1420 ;;
     4) SECUREBOX_ANSWERS[mtu]=1400 ;;
     5) SECUREBOX_ANSWERS[mtu]=1280 ;;
-    6) SECUREBOX_ANSWERS[mtu]=keep ;;
-    7)
+    6)
       local m
-      ui_ask_mtu m "Enter MTU" "$rec"
+      ui_ask_mtu m "Enter MTU" "$cur"
       SECUREBOX_ANSWERS[mtu]="$m"
+      ;;
+    7)
+      SECUREBOX_ANSWERS[mtu]=keep
+      SECUREBOX_ANSWERS[mtu_mss_clamp]=yes
       ;;
   esac
 }
@@ -157,8 +166,21 @@ ask_timesync() {
 ask_bbr() {
   if ui_confirm "Apply BBR + network tuning?" "Y"; then
     SECUREBOX_ANSWERS[do_bbr]=yes
+    local has_vpn=0
+    if ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^(wg|tun|tap)/{found=1} END{exit found?0:1}'; then
+      has_vpn=1
+    fi
+    if (( has_vpn )); then
+      ui_info "VPN interfaces (wg*/tun*) detected — ip_forward will be enabled automatically."
+      SECUREBOX_ANSWERS[bbr_ip_forward]=yes
+    elif ui_confirm "Also enable IPv4 forwarding (needed for VPN gateways)?" "N"; then
+      SECUREBOX_ANSWERS[bbr_ip_forward]=yes
+    else
+      SECUREBOX_ANSWERS[bbr_ip_forward]=no
+    fi
   else
     SECUREBOX_ANSWERS[do_bbr]=no
+    SECUREBOX_ANSWERS[bbr_ip_forward]=no
   fi
 }
 
@@ -200,19 +222,27 @@ ask_ssh() {
 
   SECUREBOX_ANSWERS[ssh_wait_confirm]=yes
 
-  # Password auth
+  local max_tries
+  ui_ask max_tries "MaxAuthTries (login attempts before disconnect)" "5"
+  if is_uint "$max_tries" && (( max_tries >= 1 && max_tries <= 20 )); then
+    SECUREBOX_ANSWERS[ssh_max_auth_tries]="$max_tries"
+  else
+    SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
+  fi
+
+  # Password auth — only offer disable if CURRENT login user has a usable key
   local has_key=0
-  if [[ -s /root/.ssh/authorized_keys ]] || find /home -maxdepth 3 -path '*/.ssh/authorized_keys' -size +0 2>/dev/null | grep -q .; then
+  if declare -F _ssh_user_has_usable_key >/dev/null 2>&1 && _ssh_user_has_usable_key; then
     has_key=1
   fi
   if (( has_key )); then
-    if ui_confirm "SSH keys detected. Disable password authentication?" "N"; then
+    if ui_confirm "Usable SSH key found for current login user. Disable password authentication?" "N"; then
       SECUREBOX_ANSWERS[ssh_password_auth]=no
     else
       SECUREBOX_ANSWERS[ssh_password_auth]=keep
     fi
   else
-    ui_warn "No SSH keys detected — password authentication will stay enabled."
+    ui_warn "No usable SSH key for current login user — password authentication will stay enabled."
     SECUREBOX_ANSWERS[ssh_password_auth]=keep
   fi
 
@@ -233,8 +263,18 @@ ask_ssh() {
 ask_abuse() {
   if ui_confirm "Block curated abuse/scanner IP ranges (inbound)?" "N"; then
     SECUREBOX_ANSWERS[block_abuse]=yes
+    local profile_choice
+    ui_menu profile_choice "Abuse block profile" \
+      "minimal — known bad / bulletproof hosting only (recommended)" \
+      "aggressive — also noisy VPS hosting slices (may block cloud clients)"
+    case "$profile_choice" in
+      2) SECUREBOX_ANSWERS[abuse_profile]=aggressive ;;
+      *) SECUREBOX_ANSWERS[abuse_profile]=minimal ;;
+    esac
+    ui_info "Abuse profile: ${SECUREBOX_ANSWERS[abuse_profile]}"
   else
     SECUREBOX_ANSWERS[block_abuse]=no
+    SECUREBOX_ANSWERS[abuse_profile]=minimal
   fi
 }
 
@@ -328,7 +368,7 @@ review_answers() {
   ui_kv "SSH password" "${SECUREBOX_ANSWERS[ssh_password_auth]:-}"
   ui_kv "Root login" "${SECUREBOX_ANSWERS[ssh_permit_root]:-}"
   ui_kv "Disable IPv6" "${SECUREBOX_ANSWERS[disable_ipv6]:-}"
-  ui_kv "Block abuse ranges" "${SECUREBOX_ANSWERS[block_abuse]:-}"
+  ui_kv "Block abuse ranges" "${SECUREBOX_ANSWERS[block_abuse]:-} (${SECUREBOX_ANSWERS[abuse_profile]:-minimal})"
   ui_kv "UFW enable" "${SECUREBOX_ANSWERS[ufw_enable]:-}"
   ui_kv "UFW reset" "${SECUREBOX_ANSWERS[ufw_reset]:-}"
   ui_kv "UFW auto ports" "${SECUREBOX_ANSWERS[ufw_auto_discover]:-}"
@@ -347,18 +387,21 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[apply_mode]=auto
   SECUREBOX_ANSWERS[continue_on_error]=yes
 
-  # Safe always-on
-  SECUREBOX_ANSWERS[do_update]=yes
+  # Truly low-risk defaults — ask or skip higher-impact steps
+  SECUREBOX_ANSWERS[do_update]=no
   SECUREBOX_ANSWERS[do_timesync]=yes
   SECUREBOX_ANSWERS[do_bbr]=yes
-  SECUREBOX_ANSWERS[do_logs]=yes
+  SECUREBOX_ANSWERS[do_logs]=no
+  SECUREBOX_ANSWERS[logs_truncate_active]=no
+  SECUREBOX_ANSWERS[logs_docker_prune]=no
   SECUREBOX_ANSWERS[enable_fail2ban]=yes
   SECUREBOX_ANSWERS[f2b_bantime]=1h
   SECUREBOX_ANSWERS[f2b_findtime]=10m
   SECUREBOX_ANSWERS[f2b_maxretry]=4
   SECUREBOX_ANSWERS[unattended]=yes
   SECUREBOX_ANSWERS[unattended_reboot]=no
-  SECUREBOX_ANSWERS[disable_unused]=yes
+  # Masking services is not low-risk — skip unless Customize
+  SECUREBOX_ANSWERS[disable_unused]=no
   SECUREBOX_ANSWERS[disable_snapd]=no
 
   # Keep current DNS/MTU — changing them has cut connectivity on some VPS
@@ -367,7 +410,7 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[mtu]=keep
   ui_info "Auto: keeping current DNS and MTU (safest for connectivity)"
 
-  # SSH harden, port unchanged
+  # SSH harden lightly, port unchanged
   local cur
   cur="$(_ssh_current_port 2>/dev/null || echo 22)"
   SECUREBOX_ANSWERS[do_ssh]=yes
@@ -376,9 +419,11 @@ defaults_auto_all() {
   SECUREBOX_ANSWERS[ssh_wait_confirm]=no
   SECUREBOX_ANSWERS[ssh_password_auth]=keep
   SECUREBOX_ANSWERS[ssh_permit_root]=keep
+  SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
 
   # High-risk — NEVER auto-enable (UFW/IPv6 still asked below)
   SECUREBOX_ANSWERS[block_abuse]=no
+  SECUREBOX_ANSWERS[abuse_profile]=minimal
   SECUREBOX_ANSWERS[disable_ipv6]=no
   SECUREBOX_ANSWERS[ufw_enable]=no
   SECUREBOX_ANSWERS[ufw_reset]=no
@@ -398,10 +443,26 @@ questionnaire_all() {
   case "$mode" in
     1)
       defaults_auto_all
+      ui_step "Automatic — optional higher-impact steps (default skip)"
+      if ui_confirm "Run apt full-upgrade as part of Automatic?" "N"; then
+        SECUREBOX_ANSWERS[do_update]=yes
+      fi
+      if ui_confirm "Clean journal/rotated logs (never docker prune / never truncate auth.log)?" "N"; then
+        SECUREBOX_ANSWERS[do_logs]=yes
+        SECUREBOX_ANSWERS[logs_truncate_active]=no
+        SECUREBOX_ANSWERS[logs_docker_prune]=no
+      fi
+      if ui_confirm "Disable unused services (avahi/cups/… — masks units)?" "N"; then
+        SECUREBOX_ANSWERS[disable_unused]=yes
+      fi
       ui_step "Automatic needs two decisions (can cut access if wrong)"
       ask_ipv6
       ask_ufw
-      review_answers
+      if declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen
+      else
+        review_answers
+      fi
       if ! ui_confirm "Run LOW-RISK automatic Apply All with these choices?" "Y"; then
         ui_warn "Cancelled by user."
         return 1
@@ -424,7 +485,11 @@ questionnaire_all() {
       ask_unattended
       ask_services
       ask_logs
-      review_answers
+      if declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen
+      else
+        review_answers
+      fi
       if ! ui_confirm "Proceed using ONLY these answers (nothing else will be forced)?" "Y"; then
         ui_warn "Cancelled by user."
         return 1

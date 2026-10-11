@@ -32,6 +32,8 @@ source_modules() {
   # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/restore.sh"
   # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/verify.sh"
+  # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/report.sh"
 }
 
@@ -42,6 +44,14 @@ run_pipeline_all() {
     ui_kv "$k" "${SECUREBOX_ANSWERS[$k]:-(unset)}"
   done
   ui_box_end
+
+  if [[ "${SECUREBOX_DRY_RUN:-0}" == "1" ]]; then
+    ui_warn "DRY-RUN mode — modules will skip live changes where supported"
+  fi
+
+  if declare -F preflight_checks >/dev/null 2>&1; then
+    preflight_checks
+  fi
 
   local -a steps=(
     module_update
@@ -57,6 +67,7 @@ run_pipeline_all() {
     module_unattended
     module_services
     module_logs
+    module_verify
     module_report
   )
   local total="${#steps[@]}"
@@ -71,6 +82,10 @@ run_pipeline_all() {
       return 1
     fi
   done
+  if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+    ui_error "One or more modules failed: ${SECUREBOX_FAILED_MODULES[*]}"
+    return 1
+  fi
   return 0
 }
 
@@ -91,6 +106,7 @@ run_single() {
     services) module_services ;;
     logs) module_logs ;;
     restore) module_restore ;;
+    verify) module_verify ;;
     report) module_report ;;
     *) ui_error "Unknown module: $name"; return 1 ;;
   esac

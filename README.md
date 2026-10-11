@@ -1,36 +1,91 @@
-# 🧡 MrClock ToolBox
+# MrClock ToolBox
 
-ایمن‌سازی سرور VPN — **Ubuntu 22–26** و **Debian 12–13**
+VPN hardening & optimization for **Ubuntu 22–26** and **Debian 12–13**.
 
-## 🚀 نصب
+## Install
 
 ```bash
 curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash
 ```
 
-بعدش فقط:
+Then:
 
 ```bash
 sudo mrclock
 ```
 
-## ✨ قابلیت‌ها
+## CLI (all flags)
 
-- 🔄 آپدیت سیستم
-- 🌐 DNS با تست سرعت واقعی روی سرور تو
-- ⚡ BBR و تیونینگ شبکه
-- 🛡️ UFW + Fail2Ban + SSH
-- 🚫 بلاک رنج abuse *(اختیاری)*
-- 🔒 خاموش کردن IPv6 *(اختیاری)*
-- 🧹 پاک‌سازی لاگ Ubuntu / Docker
-- ♻️ بازگردانی تغییرات قبلی (DNS/MTU/SSH/UFW/…)
+```text
+Modes:
+  (default)              Interactive menu
+  --one-click            Non-interactive Apply All with safe defaults
+  --dry-run              Plan only — show what would change, do not apply
+  --verify               Run the verify module and exit
+  --help, -h             Show this help
 
-گزینه ۱: **Automatic کم‌ریسک** (فقط UFW و IPv6؛ DNS/MTU دست‌نخورده) یا **Customize**.
-MTU/DNS هرگز IP یا gateway را بازنویسی نمی‌کنند.
+SSH / network:
+  --ssh-port <port>      SSH port (1–65535) for --one-click
+  --mtu <value>          MTU (1280–9000) or 'keep'
+  --dns <id>             cloudflare|google|quad9|opendns|adguard|keep
+  --disable-ipv6         Disable IPv6 in --one-click
 
-## ⚠️ نکته
+UFW:
+  --ufw                  Enable UFW in --one-click
+  --no-ufw               Do not enable UFW (default for one-click)
+  --ufw-ports <list>     Extra allows, e.g. "443 51820/udp 1000:2000/tcp"
+  --ufw-discover         Auto-allow discovered public listeners
+  --ufw-reset            Reset UFW rules before applying (dangerous for NAT)
 
-بعد از عوض کردن پورت SSH، اول از ترمینال جدید وصل شو — سشن فعلی را نبند.
+Abuse / extras:
+  --block-abuse          Enable abuse CIDR blocking (minimal profile)
+  --no-abuse-block       Skip abuse CIDR blocking (default)
+  --abuse-profile <p>    minimal|aggressive (with --block-abuse)
+  --fail2ban             Enable Fail2Ban
+  --unattended           Enable unattended-upgrades
+
+Safety:
+  --rollback-seconds N   Arm timed auto-rollback for SSH/UFW/DNS/MTU (default 120)
+  --no-rollback          Disable timed auto-rollback
+```
+
+Examples:
+
+```bash
+sudo mrclock --help
+sudo mrclock --one-click --ufw --ufw-ports "443 51820/udp" --ufw-discover --fail2ban
+sudo mrclock --dry-run --one-click
+sudo mrclock --verify
+```
+
+## Features
+
+- Apply All: **Automatic (low-risk)** or **Customize** — Plan screen + preflight first
+- DNS (live dig benchmark), MTU (default keep / MSS clamp), BBR
+- UFW autopilot, SSH hardening (`00-securebox.conf`), Fail2Ban
+- Optional abuse CIDR block (minimal / aggressive profiles)
+- Optional IPv6 disable (refuses if your SSH session is IPv6)
+- Restore previous configs + live MTU/sysctl/services/UFW state
+- Verify module: `sshd -T`, `ss`, `resolvectl`, `ufw`, `tc`, sysctl
+- Timed auto-rollback for SSH/UFW/DNS/MTU unless you confirm
+
+Rule #1: never lock out the admin or cut connectivity.
+
+## Safety notes
+
+- After changing the SSH port, open a **new** terminal before closing the current session.
+- Automatic never enables abuse block or UFW without asking; keeps DNS/MTU by default.
+- Release integrity: publish `SHA256SUMS` (+ `SHA256SUMS.asc`) as **separate** GitHub
+  Release assets — see [docs/RELEASE.md](docs/RELEASE.md). A checksum file inside the
+  tarball alone does not prove authenticity.
+
+## Dev / CI
+
+```bash
+shellcheck -x -S warning install.sh lib/*.sh modules/*.sh scripts/*.sh
+bats -r tests
+./scripts/gen-checksums.sh   # writes dist/ for release upload
+```
 
 ---
 

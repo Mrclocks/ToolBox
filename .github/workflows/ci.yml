@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: Run shellcheck
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find lib modules -type f -name '*.sh' | sort)
+          files+=(install.sh scripts/gen-checksums.sh)
+          shellcheck -x -S warning "${files[@]}"
+
+  bats:
+    name: bats unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+      - name: Run bats
+        run: bats -r tests
+
+  smoke:
+    name: container smoke (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:12
+          - debian:13
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq bash ca-certificates curl iproute2 procps shellcheck bats \
+            openssh-server || apt-get install -y -qq bash ca-certificates curl iproute2 procps
+      - name: shellcheck (in-container)
+        run: |
+          if command -v shellcheck >/dev/null; then
+            shellcheck -x -S warning install.sh lib/*.sh modules/*.sh scripts/gen-checksums.sh
+          else
+            echo "shellcheck not available in this image — skipping (host job is authoritative)"
+          fi
+      - name: bats (in-container)
+        run: |
+          if command -v bats >/dev/null; then
+            bats -r tests
+          else
+            echo "bats not available — skipping"
+          fi
+      - name: smoke help / dry-run parse
+        run: |
+          bash install.sh --help | grep -qE 'MrClock|Usage'
+          bash install.sh --help | grep -q -- '--ufw-ports'
+          bash install.sh --help | grep -q -- '--ufw-discover'
+          bash -n install.sh
+          bash -n lib/common.sh
+          bash -n modules/ufw.sh
+          bash -n modules/ssh.sh
+          bash -c 'source lib/common.sh; is_port 22; is_ipv4 1.2.3.4; ! is_ipv4 08.1.1.1'

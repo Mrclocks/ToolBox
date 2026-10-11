@@ -3,3 +3,6 @@
 *~
 .DS_Store
 /var/
+/dist/
+SHA256SUMS
+SHA256SUMS.asc

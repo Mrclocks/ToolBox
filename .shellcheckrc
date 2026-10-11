@@ -1,0 +1,5 @@
+# Project shellcheck defaults — keep -x clean (warnings as errors in CI)
+# Associative-array keys look like unbound vars to shellcheck; prefer quoted keys.
+external-sources=true
+# Fail CI on warning+; info/style nits (SC2015/SC2119) are allowed
+severity=warning

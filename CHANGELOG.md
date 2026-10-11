@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.2.0 — 2026-10-11
+
+### Fixed — UFW
+- Verify SSH rules with `ufw show added` before enable (status is useless when inactive)
+- Detect live SSH ports from `$SSH_CONNECTION` and `ss -tlnp` (sshd)
+- Support port ranges (`1000:2000/tcp`); report skipped invalid specs
+- Warn that `ufw reset` wipes `before.rules` NAT and about `DEFAULT_FORWARD_POLICY=DROP`
+
+### Fixed — Abuse block
+- Accept `ct state established,related` (nft) / `ESTABLISHED,RELATED` (iptables) before drops
+- Opt-in profiles: `minimal` (default) / `aggressive`
+- Remove AWS/GCP/Azure/DO/Vultr/OVH/Contabo wide ranges from defaults
+- Never stop/mask postfix/bind9/named — warn only
+- Report nft loaded vs failed element counts
+- `block_abuse=no` no longer deletes prior rules without asking
+
+### Fixed — SSH
+- Drop-in renamed to `00-securebox.conf` (first value wins); verify with `sshd -T`
+- Ubuntu 24.04+ `ssh.socket`: socket drop-in + daemon-reload + restart
+- Rollback restores `sshd_config` as well as the drop-in
+- Re-run keeps pending dual-port cutover consistent
+- Disable password auth only if current login user has a usable key (ignore `command=`)
+- Remove `Protocol 2`; configurable `MaxAuthTries` (default 5)
+
+### Fixed — IPv6 / Logs / Automatic
+- Refuse or warn loudly if SSH session is over IPv6
+- Remove GRUB `ipv6.disable=1` edit (sysctl only)
+- No `docker system prune` by default; truncate auth/syslog only when opted in
+- Quiet `find -delete`; Automatic asks before full-upgrade / mask services / log cleanup
+
+### Fixed — CLI / restore / DNS / MTU / BBR / Fail2Ban
+- Flags: `--ufw-ports`, `--ufw-discover`, `--dry-run`, `--verify`, …; validate ports/DNS/MTU
+- Exit non-zero when any module failed; fix `is_ipv4` leading zeros; remove dead code
+- Live state restore (`ip link` MTU, `sysctl -w`, `systemctl unmask`, `ufw disable`)
+- Recommended restore never points at the restore safety snapshot; NM DNS rollback
+- DNS validated with `dig @server` + `resolvectl status`
+- MTU matched by MACAddress; default keep; optional TCP MSS clamping
+- BBR: `ip_forward` opt-in; `nf_conntrack` via modules-load.d; skip read-only keys; `tc qdisc`
+- Fail2Ban: `bantime.increment`, admin IP in `ignoreip`, `backend=systemd` without auth.log
+
+### Added
+- Plan / preflight screen with risk levels; timed auto-rollback (`systemd-run`)
+- `verify` module + menu item 17
+- `ui_clear` uses `clear -x`; backup dir `chmod 700`
+- Release integrity: `SHA256SUMS` (+ `.asc`) verified as **separate** release assets (never trust sums inside the tarball); latest tag via `/releases/latest` redirect
+- `--dry-run` is a hard no-write for `/etc` (modules + heal + persistent install skipped)
+- bats unit tests + GitHub Actions (shellcheck, bats, Ubuntu 22/24 & Debian 12/13 smoke)
+- README documents **all** CLI flags including `--ufw-ports` / `--ufw-discover`
+
 ## 0.1.10 — 2026-10-03
 
 ### Safety audit — never touch addressing/gateway

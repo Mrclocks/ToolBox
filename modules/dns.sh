@@ -25,14 +25,6 @@ DNS_BENCH_MS=()      # average ms; 99999 = failed
 DNS_BENCH_OK=()      # 1/0
 DNS_BENCH_BEST_IDX=""
 
-dns_preset_labels() {
-  local p
-  for p in "${DNS_PRESETS[@]}"; do
-    IFS='|' read -r _ label _ _ <<<"$p"
-    printf '%s\n' "$label"
-  done
-}
-
 dns_ensure_dig() {
   if have_cmd dig; then
     return 0
@@ -178,33 +170,6 @@ dns_run_benchmark() {
   return 1
 }
 
-dns_apply_best_from_benchmark() {
-  # Sets SECUREBOX_ANSWERS dns_* from best preset (not "current")
-  local i id choice=0
-  if [[ -z "${DNS_BENCH_BEST_IDX}" ]]; then
-    return 1
-  fi
-  i="${DNS_BENCH_BEST_IDX}"
-  id="${DNS_BENCH_IDS[$i]}"
-  # Map id → preset index in DNS_PRESETS (1-based dns_choice)
-  local p pid
-  local n=0
-  for p in "${DNS_PRESETS[@]}"; do
-    n=$((n + 1))
-    IFS='|' read -r pid _ _ _ <<<"$p"
-    if [[ "$pid" == "$id" ]]; then
-      choice=$n
-      break
-    fi
-  done
-  (( choice > 0 )) || return 1
-  SECUREBOX_ANSWERS[dns_choice]="$choice"
-  SECUREBOX_ANSWERS[dns_id]="$id"
-  SECUREBOX_ANSWERS[dns_primary]="${DNS_BENCH_PRIMARY[$i]}"
-  SECUREBOX_ANSWERS[dns_secondary]="${DNS_BENCH_SECONDARY[$i]}"
-  return 0
-}
-
 dns_preset_labels_with_bench() {
   # Menu labels enriched with last benchmark timings
   local p id label primary secondary
@@ -301,7 +266,22 @@ module_dns() {
   ui_info "DNS manager: ${DNS_MANAGER}"
   ui_info "Applying DNS: ${DNS_PRIMARY} ${DNS_SECONDARY}"
 
+  if is_dry_run; then
+    ui_info "[dry-run] Would apply DNS ${DNS_PRIMARY} ${DNS_SECONDARY} via ${DNS_MANAGER}"
+    module_ok "dns"
+    return 0
+  fi
+
   if apply_dns_servers "$DNS_PRIMARY" "$DNS_SECONDARY"; then
+    local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )); then
+      if declare -F schedule_timed_rollback >/dev/null 2>&1; then
+        schedule_timed_rollback "dns" "$rollback_secs" || true
+      fi
+      if have_tty && ui_confirm "DNS applied — confirm resolution still works (cancel auto-rollback)?" "Y"; then
+        cancel_timed_rollback "dns" || true
+      fi
+    fi
     module_ok "dns"
     ui_success "DNS configured via ${DNS_MANAGER}"
   else

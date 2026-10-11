@@ -9,7 +9,7 @@ SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -r "${SECUREBOX_ROOT}/VERSION" ]]; then
   SECUREBOX_VERSION="$(tr -d '[:space:]' <"${SECUREBOX_ROOT}/VERSION")"
 fi
-SECUREBOX_VERSION="${SECUREBOX_VERSION:-0.1.4}"
+SECUREBOX_VERSION="${SECUREBOX_VERSION:-0.2.0}"
 SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
 SECUREBOX_BACKUP_ROOT="${SECUREBOX_BACKUP_ROOT:-/var/backups/securebox}"
 SECUREBOX_LOG_DIR="${SECUREBOX_LOG_DIR:-/var/log/securebox}"
@@ -26,6 +26,7 @@ export SECUREBOX_BACKUP_ROOT SECUREBOX_LOG_DIR SECUREBOX_STATE_DIR
 export SECUREBOX_RUN_ID SECUREBOX_LOG
 
 mkdir -p "$SECUREBOX_LOG_DIR" "$SECUREBOX_STATE_DIR" "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
+chmod 700 "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
 
 log() {
   local level="$1"; shift
@@ -88,6 +89,10 @@ is_true() {
   esac
 }
 
+is_dry_run() {
+  is_true "${SECUREBOX_DRY_RUN:-0}"
+}
+
 # Strict: only explicit yes. Empty / unset / "no" => false. Never default optional work to on.
 answered_yes() {
   local key="$1"
@@ -106,12 +111,14 @@ answered_no() {
 
 require_answer_yes() {
   # usage: require_answer_yes key module_name "human reason"
-  local key="$1" mod="$2" why="${3:-not explicitly enabled by user}"
+  local key="$1"
+  local mod="$2"
+  local why="${3:-not explicitly enabled by user}"
   if answered_yes "$key"; then
-    log INFO "Answer check OK: ${key}=${SECUREBOX_ANSWERS[$key]}"
+    log INFO "Answer check OK: ${mod}: ${key}=${SECUREBOX_ANSWERS[$key]}"
     return 0
   fi
-  log INFO "Answer check SKIP: ${key}='${SECUREBOX_ANSWERS[$key]:-}' (${why})"
+  log INFO "Answer check SKIP: ${mod}: ${key}='${SECUREBOX_ANSWERS[$key]:-}' (${why})"
   return 1
 }
 
@@ -130,26 +137,96 @@ is_port() {
   is_uint "${1-}" && (( $1 >= 1 && $1 <= 65535 ))
 }
 
-is_ipv4() {
-  local ip="${1-}"
-  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-  local IFS=.
-  read -r a b c d <<<"$ip"
-  (( a <= 255 && b <= 255 && c <= 255 && d <= 255 ))
+# Single port or UFW-style range (e.g. 1000:2000)
+is_port_spec() {
+  local p="${1-}"
+  if [[ "$p" == *:* ]]; then
+    local a="${p%%:*}" b="${p#*:}"
+    is_port "$a" && is_port "$b" && (( a <= b ))
+  else
+    is_port "$p"
+  fi
 }
 
-is_cidr_v4() {
-  local c="${1-}"
-  [[ "$c" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$ ]] || return 1
-  local ip="${c%/*}"
-  is_ipv4 "$ip"
+is_ipv4() {
+  local ip="${1-}"
+  # Strict decimal octets — reject leading zeros (08.1.1.1) which break
+  # bash arithmetic (octal) and are invalid dotted-quad forms.
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  local IFS=.
+  local a b c d
+  read -r a b c d <<<"$ip"
+  [[ "$a" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$b" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$c" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  [[ "$d" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  (( 10#$a <= 255 && 10#$b <= 255 && 10#$c <= 255 && 10#$d <= 255 ))
+}
+
+# Detect live SSH listen ports: SSH_CONNECTION, ss (sshd), then sshd_config.
+# Prints one port per line.
+detect_live_ssh_ports() {
+  local -A seen=()
+  local p
+
+  # Current session destination port (most reliable for the admin)
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    # SSH_CONNECTION: client_ip client_port server_ip server_port
+    p="$(awk '{print $4}' <<<"$SSH_CONNECTION")"
+    if is_port "$p"; then
+      seen["$p"]=1
+    fi
+  fi
+
+  # Listening sshd sockets
+  if have_cmd ss; then
+    while read -r line; do
+      [[ -z "$line" ]] && continue
+      # Prefer lines mentioning sshd
+      if [[ "$line" != *sshd* && "$line" != *"/ssh"* ]]; then
+        continue
+      fi
+      local addr
+      addr="$(awk '{print $4}' <<<"$line")"
+      if [[ "$addr" == \[*\]* ]]; then
+        p="${addr##*]:}"
+      else
+        p="${addr##*:}"
+      fi
+      is_port "$p" && seen["$p"]=1
+    done < <(ss -tlnp 2>/dev/null || true)
+  fi
+
+  # Configured ports (sshd_config + drop-ins) — first Port wins per OpenSSH, but list all
+  if declare -F _ssh_current_port >/dev/null 2>&1; then
+    p="$(_ssh_current_port 2>/dev/null || true)"
+    is_port "$p" && seen["$p"]=1
+  fi
+  if [[ -f /etc/ssh/sshd_config ]]; then
+    while read -r p; do
+      is_port "$p" && seen["$p"]=1
+    done < <(awk '/^[Pp]ort[[:space:]]+[0-9]+/{print $2}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null)
+  fi
+
+  if ((${#seen[@]} == 0)); then
+    echo 22
+    return 0
+  fi
+  for p in "${!seen[@]}"; do
+    printf '%s\n' "$p"
+  done | sort -n
 }
 
 backup_file() {
   local src="$1"
+  if is_dry_run; then
+    log INFO "DRY-RUN skip backup_file: $src"
+    return 0
+  fi
   local dest_dir="${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
   local manifest="${dest_dir}/MANIFEST.txt"
   mkdir -p "$dest_dir"
+  chmod 700 "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
   local abs
   if [[ "$src" == /* ]]; then
     abs="$src"
@@ -182,16 +259,61 @@ backup_file() {
 # Remember which run id holds the latest toolbox changes (for Undo menu)
 record_backup_run() {
   mkdir -p "$SECUREBOX_STATE_DIR"
-  printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_backup_run"
+  # Never overwrite last_recommended_run with a restore safety snapshot
+  if [[ "${SECUREBOX_ANSWERS[do_restore]:-}" != "yes" ]]; then
+    printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_backup_run"
+    printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_recommended_run"
+  fi
   local hist="${SECUREBOX_STATE_DIR}/backup_runs.txt"
   if [[ ! -f "$hist" ]] || ! grep -qxF "$SECUREBOX_RUN_ID" "$hist" 2>/dev/null; then
     printf '%s\n' "$SECUREBOX_RUN_ID" >>"$hist"
   fi
 }
 
+# Record a live pre-change value once (first write wins for the session baseline)
+state_record_once() {
+  local key="$1"
+  local value="$2"
+  mkdir -p "$SECUREBOX_STATE_DIR"
+  local f="${SECUREBOX_STATE_DIR}/${key}"
+  if [[ ! -f "$f" ]]; then
+    printf '%s\n' "$value" >"$f"
+  fi
+}
+
+state_get() {
+  local key="$1"
+  local f="${SECUREBOX_STATE_DIR}/${key}"
+  [[ -r "$f" ]] || return 1
+  tr -d '[:space:]' <"$f"
+}
+
+# Snapshot key sysctl values before BBR / IPv6 modules overwrite them
+state_record_sysctl_baseline() {
+  local key val
+  mkdir -p "${SECUREBOX_STATE_DIR}/sysctl"
+  for key in \
+    net.ipv4.ip_forward \
+    net.ipv4.tcp_congestion_control \
+    net.core.default_qdisc \
+    net.ipv6.conf.all.disable_ipv6 \
+    net.ipv6.conf.default.disable_ipv6 \
+    net.netfilter.nf_conntrack_max; do
+    val="$(sysctl -n "$key" 2>/dev/null || true)"
+    [[ -n "$val" ]] || continue
+    if [[ ! -f "${SECUREBOX_STATE_DIR}/sysctl/${key}" ]]; then
+      printf '%s\n' "$val" >"${SECUREBOX_STATE_DIR}/sysctl/${key}"
+    fi
+  done
+}
+
 write_sysctl_dropin() {
   local file="$1"
   shift
+  if is_dry_run; then
+    log INFO "DRY-RUN skip write_sysctl_dropin: $file"
+    return 0
+  fi
   mkdir -p "$(dirname "$file")"
   backup_file "$file"
   {

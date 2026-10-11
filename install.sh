@@ -29,25 +29,79 @@ _securebox_resolve_ref() {
     return 0
   fi
 
-  local api tag
-  api="https://api.github.com/repos/${SECUREBOX_REPO}/releases/latest"
-  tag="$(curl -fsSL --connect-timeout 15 "$api" 2>/dev/null \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    | head -n1)"
+  # Prefer /releases/latest redirect (no api.github.com rate limits)
+  local tag loc
+  loc="$(curl -fsSIL --connect-timeout 15 \
+    "https://github.com/${SECUREBOX_REPO}/releases/latest" 2>/dev/null \
+    | tr -d '\r' \
+    | awk 'tolower($1)=="location:"{print $2; exit}')"
+  if [[ -n "$loc" ]]; then
+    tag="${loc##*/}"
+  fi
 
-  # Fallback: newest release including pre-releases
-  if [[ -z "$tag" || "$tag" == "null" ]]; then
-    api="https://api.github.com/repos/${SECUREBOX_REPO}/releases?per_page=5"
-    tag="$(curl -fsSL --connect-timeout 15 "$api" 2>/dev/null \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  # Fallback: parse HTML of releases/latest
+  if [[ -z "$tag" || "$tag" == "latest" ]]; then
+    tag="$(curl -fsSL --connect-timeout 15 \
+      "https://github.com/${SECUREBOX_REPO}/releases/latest" 2>/dev/null \
+      | sed -n 's|.*releases/tag/\([^"<> ]*\).*|\1|p' \
       | head -n1)"
   fi
 
-  if [[ -z "$tag" || "$tag" == "null" ]]; then
-    echo "[MrClock] ERROR: could not resolve latest release tag." >&2
+  if [[ -z "$tag" || "$tag" == "null" || "$tag" == "latest" ]]; then
+    echo "[MrClock] ERROR: could not resolve latest release tag via /releases/latest." >&2
     return 1
   fi
   printf '%s\n' "$tag"
+}
+
+_securebox_verify_release_assets() {
+  # Trust model: SHA256SUMS (+ optional .asc) MUST be separate GitHub Release
+  # assets — NEVER trust a checksum file that arrived inside the same tarball.
+  # Expect lines like:
+  #   <hash>  install.sh
+  #   <hash>  ToolBox-<tag>.tar.gz
+  local archive="$1"
+  local tag="$2"
+  local asset_dir="$3"
+  local sums="${asset_dir}/SHA256SUMS"
+  local sig="${asset_dir}/SHA256SUMS.asc"
+
+  if [[ ! -f "$sums" ]]; then
+    echo "[MrClock] WARN: no separate SHA256SUMS release asset — skipping integrity check." >&2
+    return 0
+  fi
+
+  if [[ -f "$sig" ]] && command -v gpg >/dev/null 2>&1; then
+    if gpg --verify "$sig" "$sums" >/dev/null 2>&1; then
+      echo "[MrClock] SHA256SUMS signature OK" >&2
+    else
+      echo "[MrClock] ERROR: SHA256SUMS.asc signature verification failed." >&2
+      return 1
+    fi
+  elif [[ -f "$sig" ]]; then
+    echo "[MrClock] WARN: gpg missing — could not verify SHA256SUMS.asc" >&2
+  else
+    echo "[MrClock] WARN: SHA256SUMS.asc not published — checksums are unsigned." >&2
+  fi
+
+  local archive_base want got
+  archive_base="$(basename "$archive")"
+  # Accept either ToolBox-<tag>.tar.gz or the github archive name
+  want="$(awk -v f1="ToolBox-${tag}.tar.gz" -v f2="$archive_base" '
+    $2==f1 || $2==f2 || $NF==f1 || $NF==f2 {print $1; exit}
+  ' "$sums")"
+  if [[ -z "$want" ]]; then
+    # Also allow install.sh-only sums when fetching install.sh alone
+    echo "[MrClock] WARN: SHA256SUMS has no entry for archive ${archive_base}" >&2
+    return 0
+  fi
+  got="$(sha256sum "$archive" | awk '{print $1}')"
+  if [[ "$got" != "$want" ]]; then
+    echo "[MrClock] ERROR: archive SHA256 mismatch (got ${got}, want ${want})." >&2
+    return 1
+  fi
+  echo "[MrClock] Archive SHA256 verified against release asset SHA256SUMS" >&2
+  return 0
 }
 
 _securebox_install_persistent() {
@@ -61,6 +115,7 @@ _securebox_install_persistent() {
   [[ -f "${src}/VERSION" ]] && cp -a "${src}/VERSION" "$SECUREBOX_INSTALL_DIR/VERSION" || true
   [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$SECUREBOX_INSTALL_DIR/LICENSE" || true
   [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$SECUREBOX_INSTALL_DIR/README.md" || true
+  [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$SECUREBOX_INSTALL_DIR/CHANGELOG.md" || true
   chmod 755 "$SECUREBOX_INSTALL_DIR/install.sh"
   mkdir -p "$(dirname "$SECUREBOX_BIN_LINK")"
   cat >"$SECUREBOX_BIN_LINK" <<EOF
@@ -80,16 +135,38 @@ _securebox_fetch_tree() {
   tmp="$(mktemp -d /tmp/securebox-fetch.XXXXXX)"
   archive="${tmp}/securebox.tgz"
 
-  url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
-  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} (latest) ..." >&2
+  # Prefer the release-asset tarball (named ToolBox-<tag>.tar.gz) when published;
+  # fall back to GitHub source archive.
+  local asset_archive="ToolBox-${SECUREBOX_REF}.tar.gz"
+  url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/${asset_archive}"
+  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
   if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive"; then
-    url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
+    url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
     curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
-      echo "[MrClock] ERROR: failed to download release archive." >&2
-      echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
+      url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
+      curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
+        echo "[MrClock] ERROR: failed to download release archive." >&2
+        echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
+        rm -rf "$tmp"
+        exit 1
+      }
+    }
+  fi
+
+  # Download SHA256SUMS as a SEPARATE release asset (never from inside the tarball)
+  local sums_dir="${tmp}/release-assets"
+  mkdir -p "$sums_dir"
+  local sums_url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS"
+  if curl -fsSL --connect-timeout 15 "$sums_url" -o "${sums_dir}/SHA256SUMS" 2>/dev/null; then
+    curl -fsSL --connect-timeout 15 \
+      "https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS.asc" \
+      -o "${sums_dir}/SHA256SUMS.asc" 2>/dev/null || true
+    _securebox_verify_release_assets "$archive" "$SECUREBOX_REF" "$sums_dir" || {
       rm -rf "$tmp"
       exit 1
     }
+  else
+    echo "[MrClock] WARN: SHA256SUMS release asset missing — publish it separately for integrity." >&2
   fi
 
   tar -xzf "$archive" -C "$tmp" || {
@@ -162,6 +239,10 @@ source "${SECUREBOX_ROOT}/lib/net.sh"
 # shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/questions.sh"
 # shellcheck disable=SC1091
+source "${SECUREBOX_ROOT}/lib/rollback.sh"
+# shellcheck disable=SC1091
+source "${SECUREBOX_ROOT}/lib/plan.sh"
+# shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/runner.sh"
 
 source_modules
@@ -171,16 +252,38 @@ ${SECUREBOX_NAME} v${SECUREBOX_VERSION}
 
 Usage: sudo bash install.sh [options]
 
-Options:
+Modes:
+  (default)            Interactive menu
   --one-click          Non-interactive Apply All with safe defaults
-  --ssh-port <port>    SSH port for --one-click
-  --disable-ipv6       Disable IPv6 in --one-click
-  --mtu <value>        MTU for --one-click (or 'keep')
-  --dns <id>           cloudflare|google|quad9|opendns|adguard|keep
-  --no-abuse-block     Skip abuse CIDR blocking
-  --no-ufw             Prepare rules but do not enable UFW
-  --help               Show this help
+  --dry-run            Plan only — show what would change, do not apply
+  --verify             Run the verify module and exit
+  --help, -h           Show this help
 
+SSH / network:
+  --ssh-port <port>    SSH port (1–65535) for --one-click
+  --mtu <value>        MTU (1280–9000) or 'keep'
+  --dns <id>           cloudflare|google|quad9|opendns|adguard|keep
+  --disable-ipv6       Disable IPv6 in --one-click
+
+UFW:
+  --ufw                Enable UFW in --one-click
+  --no-ufw             Do not enable UFW (default for one-click)
+  --ufw-ports <list>   Extra allows, e.g. "443 51820/udp 1000:2000/tcp"
+  --ufw-discover       Auto-allow discovered public listeners
+  --ufw-reset          Reset UFW rules before applying (dangerous for NAT)
+
+Abuse / extras:
+  --block-abuse        Enable abuse CIDR blocking (minimal profile)
+  --no-abuse-block     Skip abuse CIDR blocking (default)
+  --abuse-profile <p>  minimal|aggressive (with --block-abuse)
+  --fail2ban           Enable Fail2Ban
+  --unattended         Enable unattended-upgrades
+
+Safety:
+  --rollback-seconds N Arm timed auto-rollback for SSH/UFW/DNS/MTU (default 120)
+  --no-rollback        Disable timed auto-rollback
+
+Exit status: non-zero if any module failed.
 Interactive mode (default): menu with Apply All + individual features.
 EOF
 }
@@ -195,6 +298,9 @@ defaults_one_click() {
   SECUREBOX_ANSWERS[do_timesync]=yes
   SECUREBOX_ANSWERS[do_bbr]=yes
   SECUREBOX_ANSWERS[do_ssh]=no
+  SECUREBOX_ANSWERS[do_logs]=no
+  SECUREBOX_ANSWERS[logs_truncate_active]=no
+  SECUREBOX_ANSWERS[logs_docker_prune]=no
   SECUREBOX_ANSWERS[dns_choice]=6
   SECUREBOX_ANSWERS[dns_id]=keep
   SECUREBOX_ANSWERS[mtu]=keep
@@ -206,12 +312,14 @@ defaults_one_click() {
   SECUREBOX_ANSWERS[ssh_wait_confirm]=no
   SECUREBOX_ANSWERS[ssh_password_auth]=keep
   SECUREBOX_ANSWERS[ssh_permit_root]=keep
+  SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
   SECUREBOX_ANSWERS[disable_ipv6]="${SECUREBOX_CLI_DISABLE_IPV6:-no}"
   SECUREBOX_ANSWERS[block_abuse]="${SECUREBOX_CLI_BLOCK_ABUSE:-no}"
+  SECUREBOX_ANSWERS[abuse_profile]="${SECUREBOX_CLI_ABUSE_PROFILE:-minimal}"
   SECUREBOX_ANSWERS[ufw_enable]="${SECUREBOX_CLI_UFW_ENABLE:-no}"
-  SECUREBOX_ANSWERS[ufw_auto_discover]=no
-  SECUREBOX_ANSWERS[ufw_ports]=""
-  SECUREBOX_ANSWERS[ufw_reset]=no
+  SECUREBOX_ANSWERS[ufw_auto_discover]="${SECUREBOX_CLI_UFW_DISCOVER:-no}"
+  SECUREBOX_ANSWERS[ufw_ports]="${SECUREBOX_CLI_UFW_PORTS:-}"
+  SECUREBOX_ANSWERS[ufw_reset]="${SECUREBOX_CLI_UFW_RESET:-no}"
   SECUREBOX_ANSWERS[enable_fail2ban]="${SECUREBOX_CLI_FAIL2BAN:-no}"
   SECUREBOX_ANSWERS[unattended]="${SECUREBOX_CLI_UNATTENDED:-no}"
   SECUREBOX_ANSWERS[unattended_reboot]=no
@@ -231,35 +339,71 @@ defaults_one_click() {
       opendns) SECUREBOX_ANSWERS[dns_choice]=4; SECUREBOX_ANSWERS[dns_id]=opendns; SECUREBOX_ANSWERS[dns_primary]=208.67.222.222; SECUREBOX_ANSWERS[dns_secondary]=208.67.220.220 ;;
       adguard) SECUREBOX_ANSWERS[dns_choice]=5; SECUREBOX_ANSWERS[dns_id]=adguard; SECUREBOX_ANSWERS[dns_primary]=94.140.14.14; SECUREBOX_ANSWERS[dns_secondary]=94.140.15.15 ;;
       keep) SECUREBOX_ANSWERS[dns_choice]=6; SECUREBOX_ANSWERS[dns_id]=keep ;;
+      *) ui_error "Invalid --dns value: ${SECUREBOX_CLI_DNS}"; exit 1 ;;
     esac
   fi
 }
 
 parse_args() {
   SECUREBOX_MODE=menu
+  SECUREBOX_DRY_RUN=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --one-click) SECUREBOX_MODE=one_click; shift ;;
+      --dry-run) SECUREBOX_DRY_RUN=1; SECUREBOX_MODE="${SECUREBOX_MODE:-menu}"; shift ;;
+      --verify) SECUREBOX_MODE=verify; shift ;;
       --ssh-port)
         [[ -n "${2-}" ]] || { ui_error "--ssh-port requires a value"; exit 1; }
+        if ! is_port "$2"; then
+          ui_error "Invalid --ssh-port: $2 (need 1–65535)"
+          exit 1
+        fi
         SECUREBOX_CLI_SSH_PORT="$2"; shift 2 ;;
       --disable-ipv6) SECUREBOX_CLI_DISABLE_IPV6=yes; shift ;;
       --mtu)
         [[ -n "${2-}" ]] || { ui_error "--mtu requires a value"; exit 1; }
+        if [[ "$2" != "keep" ]] && { ! is_uint "$2" || (( $2 < 1280 || $2 > 9000 )); }; then
+          ui_error "Invalid --mtu: $2 (need 1280–9000 or 'keep')"
+          exit 1
+        fi
         SECUREBOX_CLI_MTU="$2"; shift 2 ;;
       --dns)
         [[ -n "${2-}" ]] || { ui_error "--dns requires a value"; exit 1; }
+        case "$2" in
+          cloudflare|google|quad9|opendns|adguard|keep) ;;
+          *) ui_error "Invalid --dns: $2 (cloudflare|google|quad9|opendns|adguard|keep)"; exit 1 ;;
+        esac
         SECUREBOX_CLI_DNS="$2"; shift 2 ;;
       --no-abuse-block) SECUREBOX_CLI_BLOCK_ABUSE=no; shift ;;
       --block-abuse) SECUREBOX_CLI_BLOCK_ABUSE=yes; shift ;;
+      --abuse-profile)
+        [[ -n "${2-}" ]] || { ui_error "--abuse-profile requires minimal|aggressive"; exit 1; }
+        case "$2" in
+          minimal|aggressive) SECUREBOX_CLI_ABUSE_PROFILE="$2" ;;
+          *) ui_error "Invalid --abuse-profile: $2"; exit 1 ;;
+        esac
+        shift 2 ;;
       --no-ufw) SECUREBOX_CLI_UFW_ENABLE=no; shift ;;
       --ufw) SECUREBOX_CLI_UFW_ENABLE=yes; shift ;;
+      --ufw-ports)
+        [[ -n "${2-}" ]] || { ui_error "--ufw-ports requires a value"; exit 1; }
+        SECUREBOX_CLI_UFW_PORTS="$2"; shift 2 ;;
+      --ufw-discover) SECUREBOX_CLI_UFW_DISCOVER=yes; shift ;;
+      --ufw-reset) SECUREBOX_CLI_UFW_RESET=yes; shift ;;
       --fail2ban) SECUREBOX_CLI_FAIL2BAN=yes; shift ;;
       --unattended) SECUREBOX_CLI_UNATTENDED=yes; shift ;;
+      --rollback-seconds)
+        if [[ -z "${2-}" ]] || ! is_uint "$2"; then
+          ui_error "--rollback-seconds requires a number"
+          exit 1
+        fi
+        SECUREBOX_ROLLBACK_SECONDS="$2"; shift 2 ;;
+      --no-rollback) SECUREBOX_ROLLBACK_SECONDS=0; shift ;;
       --help|-h) usage; exit 0 ;;
       *) ui_error "Unknown option: $1"; usage; exit 1 ;;
     esac
   done
+  export SECUREBOX_DRY_RUN SECUREBOX_ROLLBACK_SECONDS
 }
 
 menu_loop() {
@@ -285,6 +429,7 @@ menu_loop() {
     printf '  %s14)%s Clean Logs (Ubuntu/Docker)\n' "$C_ORANGE" "$C_RESET"
     printf '  %s15)%s Restore previous changes\n' "$C_GREEN" "$C_RESET"
     printf '  %s16)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s17)%s Verify (sshd/ss/resolvectl/ufw/tc/sysctl)\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
     ui_line 56 '-'
     local choice
@@ -382,6 +527,11 @@ menu_loop() {
         run_single report
         ui_pause
         ;;
+      17)
+        ui_clear
+        run_single verify
+        ui_pause
+        ;;
       0|q|Q|exit)
         ui_info "Goodbye."
         exit 0
@@ -408,20 +558,25 @@ main() {
   detect_network_stack
   detect_dns_manager
 
-  # Auto-heal outbound abuse blocks from older betas so re-runs / updates work
-  if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
-    _abuse_repair_outbound
-  fi
-  # Auto-heal ANY artifacts that can steal DHCP/gateway
-  if declare -F heal_network_safety >/dev/null 2>&1; then
-    heal_network_safety
-  elif declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
-    heal_networkd_mtu_dropins
-  fi
+  # Dry-run: never heal, never install to /opt, never mutate firewall/state
+  if ! is_dry_run; then
+    # Auto-heal outbound abuse blocks from older betas so re-runs / updates work
+    if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
+      _abuse_repair_outbound
+    fi
+    # Auto-heal ANY artifacts that can steal DHCP/gateway
+    if declare -F heal_network_safety >/dev/null 2>&1; then
+      heal_network_safety
+    elif declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
+      heal_networkd_mtu_dropins
+    fi
 
-  # Ensure local launcher exists for next run without curl
-  if _securebox_have_tree "${SECUREBOX_ROOT}"; then
-    _securebox_install_persistent "${SECUREBOX_ROOT}" 2>/dev/null || true
+    # Ensure local launcher exists for next run without curl
+    if _securebox_have_tree "${SECUREBOX_ROOT}"; then
+      _securebox_install_persistent "${SECUREBOX_ROOT}" 2>/dev/null || true
+    fi
+  else
+    ui_warn "DRY-RUN: skipping heal / persistent install / all /etc writes"
   fi
 
   log INFO "MrClock toolbox ${SECUREBOX_VERSION} starting on ${OS_PRETTY}"
@@ -430,8 +585,35 @@ main() {
     one_click)
       ui_banner
       defaults_one_click
-      review_answers
+      if is_dry_run && declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen
+        ui_success "Dry-run complete — no changes applied"
+        exit 0
+      fi
+      if declare -F show_plan_screen >/dev/null 2>&1; then
+        show_plan_screen || true
+        if have_tty && ! ui_confirm "Execute this plan?" "Y"; then
+          ui_warn "Cancelled."
+          exit 1
+        fi
+      else
+        review_answers
+      fi
       run_pipeline_all
+      if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+        exit 1
+      fi
+      ;;
+    verify)
+      ui_banner
+      if declare -F module_verify >/dev/null 2>&1; then
+        module_verify
+      else
+        run_single report
+      fi
+      if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+        exit 1
+      fi
       ;;
     menu)
       menu_loop

@@ -9,6 +9,11 @@ module_unattended() {
     module_skip "unattended" "unattended='${SECUREBOX_ANSWERS[unattended]:-}'"
     return 0
   fi
+  if is_dry_run; then
+    ui_info "[dry-run] Would enable unattended-upgrades drop-ins under /etc/apt/apt.conf.d/"
+    module_ok "unattended"
+    return 0
+  fi
 
   if ! apt_install_safe unattended-upgrades apt-listchanges; then
     module_fail "unattended" "install failed"

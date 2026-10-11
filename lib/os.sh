@@ -8,6 +8,7 @@ OS_VERSION_CODENAME=""
 OS_PRETTY=""
 OS_FAMILY=""
 OS_SUPPORTED=0
+export OS_ID OS_VERSION_ID OS_VERSION_CODENAME OS_PRETTY OS_FAMILY OS_SUPPORTED
 
 detect_os() {
   if [[ ! -r /etc/os-release ]]; then
