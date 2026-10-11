@@ -27,13 +27,15 @@ ui_clear() {
   # Prefer clear -x (keeps scrollback policy sane; avoids full RIS \033c which
   # breaks some mobile SSH clients / tmux). Fall back to ANSI wipe.
   if have_cmd clear; then
-    clear -x 2>/dev/null || clear 2>/dev/null || true
-    if [[ -w /dev/tty ]]; then
-      clear -x >/dev/tty 2>/dev/null || clear >/dev/tty 2>/dev/null || true
+    { clear -x || clear; } >/dev/null 2>&1 || true
+    if [[ -e /dev/tty && -w /dev/tty ]]; then
+      { clear -x || clear; } >/dev/tty 2>/dev/null || true
     fi
   else
     printf '\033[H\033[2J\033[3J' 2>/dev/null || true
-    [[ -w /dev/tty ]] && printf '\033[H\033[2J\033[3J' >/dev/tty 2>/dev/null || true
+    if [[ -e /dev/tty && -w /dev/tty ]]; then
+      printf '\033[H\033[2J\033[3J' >/dev/tty 2>/dev/null || true
+    fi
   fi
 }
 

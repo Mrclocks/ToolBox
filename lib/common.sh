@@ -89,6 +89,10 @@ is_true() {
   esac
 }
 
+is_dry_run() {
+  is_true "${SECUREBOX_DRY_RUN:-0}"
+}
+
 # Strict: only explicit yes. Empty / unset / "no" => false. Never default optional work to on.
 answered_yes() {
   local key="$1"
@@ -215,6 +219,10 @@ detect_live_ssh_ports() {
 
 backup_file() {
   local src="$1"
+  if is_dry_run; then
+    log INFO "DRY-RUN skip backup_file: $src"
+    return 0
+  fi
   local dest_dir="${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
   local manifest="${dest_dir}/MANIFEST.txt"
   mkdir -p "$dest_dir"
@@ -302,6 +310,10 @@ state_record_sysctl_baseline() {
 write_sysctl_dropin() {
   local file="$1"
   shift
+  if is_dry_run; then
+    log INFO "DRY-RUN skip write_sysctl_dropin: $file"
+    return 0
+  fi
   mkdir -p "$(dirname "$file")"
   backup_file "$file"
   {

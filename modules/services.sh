@@ -9,6 +9,11 @@ module_services() {
     module_skip "services" "disable_unused='${SECUREBOX_ANSWERS[disable_unused]:-}'"
     return 0
   fi
+  if is_dry_run; then
+    ui_info "[dry-run] Would disable unused services (snapd only if disable_snapd=yes)"
+    module_ok "services"
+    return 0
+  fi
 
   local -a candidates=(
     avahi-daemon

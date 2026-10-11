@@ -23,15 +23,6 @@ module_fail2ban() {
     return 0
   fi
 
-  if ! apt_install_safe fail2ban; then
-    module_fail "fail2ban" "install failed"
-    confirm_continue_on_error "fail2ban" "install failed" || return 1
-    return 0
-  fi
-
-  mkdir -p /etc/fail2ban/jail.d
-  backup_file /etc/fail2ban/jail.d/securebox.conf
-
   local ssh_port new_port ports
   ssh_port="${SECUREBOX_ANSWERS[ssh_current_port]:-22}"
   new_port="${SECUREBOX_ANSWERS[ssh_port]:-$ssh_port}"
@@ -60,11 +51,20 @@ module_fail2ban() {
     ui_info "Adding admin IP to Fail2Ban ignoreip: ${admin_ip}"
   fi
 
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would configure Fail2Ban (ports=${ports} backend=${backend})"
+  if is_dry_run; then
+    ui_info "[dry-run] Would configure Fail2Ban (ports=${ports} backend=${backend} ignoreip+=${admin_ip:-none})"
     module_ok "fail2ban"
     return 0
   fi
+
+  if ! apt_install_safe fail2ban; then
+    module_fail "fail2ban" "install failed"
+    confirm_continue_on_error "fail2ban" "install failed" || return 1
+    return 0
+  fi
+
+  mkdir -p /etc/fail2ban/jail.d
+  backup_file /etc/fail2ban/jail.d/securebox.conf
 
   cat >/etc/fail2ban/jail.d/securebox.conf <<EOF
 # Managed by MrClock ${SECUREBOX_VERSION}

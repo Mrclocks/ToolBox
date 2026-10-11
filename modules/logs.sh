@@ -115,6 +115,11 @@ module_logs() {
     module_skip "logs" "do_logs='${SECUREBOX_ANSWERS[do_logs]:-}'"
     return 0
   fi
+  if is_dry_run; then
+    ui_info "[dry-run] Would clean journal/rotated logs (truncate_active=${SECUREBOX_ANSWERS[logs_truncate_active]:-no} docker_prune=${SECUREBOX_ANSWERS[logs_docker_prune]:-no})"
+    module_ok "logs"
+    return 0
+  fi
 
   local before after freed
   before="$(_logs_disk_used)"

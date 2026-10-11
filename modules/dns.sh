@@ -266,8 +266,8 @@ module_dns() {
   ui_info "DNS manager: ${DNS_MANAGER}"
   ui_info "Applying DNS: ${DNS_PRIMARY} ${DNS_SECONDARY}"
 
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would apply DNS ${DNS_PRIMARY} ${DNS_SECONDARY}"
+  if is_dry_run; then
+    ui_info "[dry-run] Would apply DNS ${DNS_PRIMARY} ${DNS_SECONDARY} via ${DNS_MANAGER}"
     module_ok "dns"
     return 0
   fi

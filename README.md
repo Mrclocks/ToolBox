@@ -14,18 +14,49 @@ Then:
 sudo mrclock
 ```
 
-## CLI
+## CLI (all flags)
+
+```text
+Modes:
+  (default)              Interactive menu
+  --one-click            Non-interactive Apply All with safe defaults
+  --dry-run              Plan only — show what would change, do not apply
+  --verify               Run the verify module and exit
+  --help, -h             Show this help
+
+SSH / network:
+  --ssh-port <port>      SSH port (1–65535) for --one-click
+  --mtu <value>          MTU (1280–9000) or 'keep'
+  --dns <id>             cloudflare|google|quad9|opendns|adguard|keep
+  --disable-ipv6         Disable IPv6 in --one-click
+
+UFW:
+  --ufw                  Enable UFW in --one-click
+  --no-ufw               Do not enable UFW (default for one-click)
+  --ufw-ports <list>     Extra allows, e.g. "443 51820/udp 1000:2000/tcp"
+  --ufw-discover         Auto-allow discovered public listeners
+  --ufw-reset            Reset UFW rules before applying (dangerous for NAT)
+
+Abuse / extras:
+  --block-abuse          Enable abuse CIDR blocking (minimal profile)
+  --no-abuse-block       Skip abuse CIDR blocking (default)
+  --abuse-profile <p>    minimal|aggressive (with --block-abuse)
+  --fail2ban             Enable Fail2Ban
+  --unattended           Enable unattended-upgrades
+
+Safety:
+  --rollback-seconds N   Arm timed auto-rollback for SSH/UFW/DNS/MTU (default 120)
+  --no-rollback          Disable timed auto-rollback
+```
+
+Examples:
 
 ```bash
 sudo mrclock --help
-sudo mrclock --one-click --ufw --ufw-ports "443 51820/udp" --fail2ban
+sudo mrclock --one-click --ufw --ufw-ports "443 51820/udp" --ufw-discover --fail2ban
 sudo mrclock --dry-run --one-click
 sudo mrclock --verify
 ```
-
-Notable flags: `--ssh-port`, `--mtu`, `--dns`, `--ufw` / `--no-ufw`, `--ufw-ports`,
-`--ufw-discover`, `--block-abuse`, `--abuse-profile`, `--disable-ipv6`,
-`--dry-run`, `--verify`, `--rollback-seconds`.
 
 ## Features
 
@@ -44,14 +75,16 @@ Rule #1: never lock out the admin or cut connectivity.
 
 - After changing the SSH port, open a **new** terminal before closing the current session.
 - Automatic never enables abuse block or UFW without asking; keeps DNS/MTU by default.
-- Release archives ship `SHA256SUMS` (optional `.asc`); `install.sh` verifies when present.
+- Release integrity: publish `SHA256SUMS` (+ `SHA256SUMS.asc`) as **separate** GitHub
+  Release assets — see [docs/RELEASE.md](docs/RELEASE.md). A checksum file inside the
+  tarball alone does not prove authenticity.
 
 ## Dev / CI
 
 ```bash
-shellcheck -x install.sh lib/*.sh modules/*.sh
+shellcheck -x -S warning install.sh lib/*.sh modules/*.sh scripts/*.sh
 bats -r tests
-./scripts/gen-checksums.sh
+./scripts/gen-checksums.sh   # writes dist/ for release upload
 ```
 
 ---

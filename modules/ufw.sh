@@ -85,6 +85,15 @@ module_ufw() {
     return 0
   fi
 
+  if is_dry_run; then
+    _ufw_collect_ssh_ports
+    ui_info "[dry-run] Would install ufw, allow SSH ports: ${UFW_SSH_PORTS[*]:-22}"
+    ui_info "[dry-run] Would allow extra: ${SECUREBOX_ANSWERS[ufw_ports]:-(none)}; discover=${SECUREBOX_ANSWERS[ufw_auto_discover]:-no}"
+    ui_info "[dry-run] Would verify via 'ufw show added' then enable"
+    module_ok "ufw"
+    return 0
+  fi
+
   if ! apt_install_safe ufw; then
     module_fail "ufw" "failed to install ufw"
     confirm_continue_on_error "ufw" "ufw install failed" || return 1
@@ -195,12 +204,6 @@ module_ufw() {
     if [[ "${fwd^^}" == "DROP" ]]; then
       ui_warn "DEFAULT_FORWARD_POLICY=DROP — WireGuard/OpenVPN forwarded traffic may be blocked."
     fi
-  fi
-
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would enable UFW now — skipped"
-    module_ok "ufw"
-    return 0
   fi
 
   ufw --force enable >/dev/null 2>&1 || true

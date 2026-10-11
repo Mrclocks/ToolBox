@@ -24,6 +24,15 @@ module_ipv6() {
     return 0
   fi
 
+  if is_dry_run; then
+    if _ipv6_ssh_session_is_v6; then
+      ui_warn "[dry-run] SSH is over IPv6 — live run would refuse/warn loudly"
+    fi
+    ui_info "[dry-run] Would disable IPv6 via sysctl drop-in (no GRUB edit)"
+    module_ok "ipv6"
+    return 0
+  fi
+
   if _ipv6_ssh_session_is_v6; then
     ui_error "Current SSH session is over IPv6 — disabling IPv6 would lock you out."
     if have_tty; then

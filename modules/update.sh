@@ -8,6 +8,11 @@ module_update() {
     module_skip "update" "do_update='${SECUREBOX_ANSWERS[do_update]:-}'"
     return 0
   fi
+  if is_dry_run; then
+    ui_info "[dry-run] Would run apt-get update && full-upgrade"
+    module_ok "update"
+    return 0
+  fi
   export DEBIAN_FRONTEND=noninteractive
 
   if ! apt_update_safe; then

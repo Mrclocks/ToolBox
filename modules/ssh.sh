@@ -320,11 +320,20 @@ module_ssh() {
     fi
   fi
 
+  local dropin="$SSH_DROPIN_PATH"
+  if is_dry_run; then
+    ui_info "[dry-run] Would write ${dropin} (port ${current}→${new_port}); MaxAuthTries=${SECUREBOX_ANSWERS[ssh_max_auth_tries]:-5}"
+    if _ssh_socket_active; then
+      ui_info "[dry-run] ssh.socket active — would update ListenStream drop-in"
+    fi
+    module_ok "ssh"
+    return 0
+  fi
+
   backup_file "$conf"
   mkdir -p /etc/ssh/sshd_config.d
   chmod 700 "${SECUREBOX_BACKUP_ROOT}" 2>/dev/null || true
 
-  local dropin="$SSH_DROPIN_PATH"
   # Migrate legacy 99- drop-in → 00- (first value wins)
   if [[ -f "$SSH_DROPIN_LEGACY" && ! -f "$dropin" ]]; then
     backup_file "$SSH_DROPIN_LEGACY"
@@ -334,12 +343,6 @@ module_ssh() {
     rm -f "$SSH_DROPIN_LEGACY"
   fi
   backup_file "$dropin"
-
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would write ${dropin} (port ${current}→${new_port})"
-    module_ok "ssh"
-    return 0
-  fi
 
   _ssh_write_dropin "$dropin" "$current" "$new_port" 0
 

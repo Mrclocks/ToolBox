@@ -8,6 +8,11 @@ module_timesync() {
     module_skip "timesync" "do_timesync='${SECUREBOX_ANSWERS[do_timesync]:-}'"
     return 0
   fi
+  if is_dry_run; then
+    ui_info "[dry-run] Would install/enable chrony"
+    module_ok "timesync"
+    return 0
+  fi
   if ! apt_install_safe chrony; then
     # fallback
     if systemctl list-unit-files | grep -q systemd-timesyncd; then

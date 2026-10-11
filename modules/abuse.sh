@@ -286,8 +286,8 @@ module_abuse() {
     return 0
   fi
 
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would apply ${#CIDRS[@]} abuse CIDRs via ${ABUSE_BACKEND}"
+  if is_dry_run; then
+    ui_info "[dry-run] Would apply ${#CIDRS[@]} abuse CIDRs via ${ABUSE_BACKEND} (with established/related accept)"
     module_ok "abuse"
     return 0
   fi

@@ -52,6 +52,13 @@ module_bbr() {
     return 0
   fi
 
+  if is_dry_run; then
+    ui_info "[dry-run] Would load nf_conntrack via /etc/modules-load.d, write BBR sysctl (skip read-only nf_conntrack_buckets), enable ip_forward only if wg*/tun*"
+    ui_info "[dry-run] Would report real qdisc via: tc qdisc show"
+    module_ok "bbr"
+    return 0
+  fi
+
   # Ensure sch_fq / tcp_bbr available
   modprobe tcp_bbr >/dev/null 2>&1 || true
   modprobe sch_fq >/dev/null 2>&1 || true
@@ -66,7 +73,7 @@ module_bbr() {
 
   state_record_sysctl_baseline
 
-  # Load nf_conntrack persistently
+  # Load nf_conntrack persistently (NOT via sysctl alone — module must exist at boot)
   mkdir -p /etc/modules-load.d
   backup_file /etc/modules-load.d/securebox-nf-conntrack.conf
   printf 'nf_conntrack\n' >/etc/modules-load.d/securebox-nf-conntrack.conf
@@ -133,19 +140,18 @@ module_bbr() {
     ui_info "Leaving net.ipv4.ip_forward unchanged (no wg*/tun* detected; opt-in via bbr_ip_forward=yes)"
   fi
 
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would write BBR sysctl drop-in"
-    module_ok "bbr"
-    return 0
-  fi
-
   _bbr_write_sysctl_filtered /etc/sysctl.d/99-securebox-bbr-network.conf "${sysctl_lines[@]}"
   sysctl --system >/dev/null 2>&1 || true
 
   local active_cc active_qdisc real_qdisc
   active_cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
   active_qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)"
-  real_qdisc="$(tc qdisc show 2>/dev/null | head -n5 | tr '\n' '; ' || echo n/a)"
+  # Report the REAL interface qdisc (not only the sysctl default for new ifaces)
+  if have_cmd tc; then
+    real_qdisc="$(tc qdisc show 2>/dev/null | tr '\n' ' | ' || echo n/a)"
+  else
+    real_qdisc="tc unavailable"
+  fi
 
   if [[ "$active_cc" != "bbr" ]]; then
     module_fail "bbr" "congestion control is ${active_cc}, expected bbr"
@@ -155,5 +161,5 @@ module_bbr() {
 
   module_ok "bbr"
   ui_success "BBR active (${active_cc}; default_qdisc=${active_qdisc})"
-  ui_info "Real qdisc (tc): ${real_qdisc}"
+  ui_info "Real qdisc (tc qdisc show): ${real_qdisc}"
 }

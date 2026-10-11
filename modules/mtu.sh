@@ -34,6 +34,18 @@ module_mtu() {
   local iface="${NET_DEFAULT_IFACE}"
   local mtu="${SECUREBOX_ANSWERS[mtu]:-}"
 
+  if is_dry_run; then
+    if answered_yes mtu_mss_clamp; then
+      ui_info "[dry-run] Would enable TCP MSS clamping (MTU unchanged)"
+    elif [[ -z "$mtu" || "$mtu" == "keep" ]]; then
+      ui_info "[dry-run] MTU keep — no change"
+    else
+      ui_info "[dry-run] Would set MTU ${mtu} on ${iface:-?}"
+    fi
+    module_ok "mtu"
+    return 0
+  fi
+
   # Optional MSS clamp without changing NIC MTU
   if answered_yes mtu_mss_clamp; then
     if _mtu_apply_mss_clamp 1360; then
@@ -67,12 +79,6 @@ module_mtu() {
   if ! network_has_default_route; then
     module_fail "mtu" "no default route — refusing MTU change"
     confirm_continue_on_error "mtu" "no default route" || return 1
-    return 0
-  fi
-
-  if is_true "${SECUREBOX_DRY_RUN:-0}"; then
-    ui_info "[dry-run] Would set MTU ${mtu} on ${iface}"
-    module_ok "mtu"
     return 0
   fi
 

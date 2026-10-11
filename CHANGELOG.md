@@ -44,8 +44,10 @@
 - Plan / preflight screen with risk levels; timed auto-rollback (`systemd-run`)
 - `verify` module + menu item 17
 - `ui_clear` uses `clear -x`; backup dir `chmod 700`
-- Release `SHA256SUMS` (+ optional signature); latest tag via `/releases/latest` redirect
+- Release integrity: `SHA256SUMS` (+ `.asc`) verified as **separate** release assets (never trust sums inside the tarball); latest tag via `/releases/latest` redirect
+- `--dry-run` is a hard no-write for `/etc` (modules + heal + persistent install skipped)
 - bats unit tests + GitHub Actions (shellcheck, bats, Ubuntu 22/24 & Debian 12/13 smoke)
+- README documents **all** CLI flags including `--ufw-ports` / `--ufw-discover`
 
 ## 0.1.10 — 2026-10-03
 

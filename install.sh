@@ -54,25 +54,53 @@ _securebox_resolve_ref() {
   printf '%s\n' "$tag"
 }
 
-_securebox_verify_release_integrity() {
-  # When SHA256SUMS is present next to the tree or downloaded with the archive,
-  # verify install.sh / VERSION. Soft-fail with warning if missing (local git).
-  local root="$1"
-  local sums="${root}/SHA256SUMS"
+_securebox_verify_release_assets() {
+  # Trust model: SHA256SUMS (+ optional .asc) MUST be separate GitHub Release
+  # assets — NEVER trust a checksum file that arrived inside the same tarball.
+  # Expect lines like:
+  #   <hash>  install.sh
+  #   <hash>  ToolBox-<tag>.tar.gz
+  local archive="$1"
+  local tag="$2"
+  local asset_dir="$3"
+  local sums="${asset_dir}/SHA256SUMS"
+  local sig="${asset_dir}/SHA256SUMS.asc"
+
   if [[ ! -f "$sums" ]]; then
+    echo "[MrClock] WARN: no separate SHA256SUMS release asset — skipping integrity check." >&2
     return 0
   fi
-  echo "[MrClock] Verifying release integrity via SHA256SUMS..." >&2
-  if command -v sha256sum >/dev/null 2>&1; then
-    if ! (cd "$root" && sha256sum -c SHA256SUMS --ignore-missing >/dev/null 2>&1); then
-      echo "[MrClock] ERROR: SHA256SUMS verification failed." >&2
+
+  if [[ -f "$sig" ]] && command -v gpg >/dev/null 2>&1; then
+    if gpg --verify "$sig" "$sums" >/dev/null 2>&1; then
+      echo "[MrClock] SHA256SUMS signature OK" >&2
+    else
+      echo "[MrClock] ERROR: SHA256SUMS.asc signature verification failed." >&2
       return 1
     fi
+  elif [[ -f "$sig" ]]; then
+    echo "[MrClock] WARN: gpg missing — could not verify SHA256SUMS.asc" >&2
+  else
+    echo "[MrClock] WARN: SHA256SUMS.asc not published — checksums are unsigned." >&2
   fi
-  if [[ -f "${root}/SHA256SUMS.asc" ]] && command -v gpg >/dev/null 2>&1; then
-    gpg --verify "${root}/SHA256SUMS.asc" "$sums" >/dev/null 2>&1 \
-      || echo "[MrClock] WARN: SHA256SUMS.asc signature could not be verified." >&2
+
+  local archive_base want got
+  archive_base="$(basename "$archive")"
+  # Accept either ToolBox-<tag>.tar.gz or the github archive name
+  want="$(awk -v f1="ToolBox-${tag}.tar.gz" -v f2="$archive_base" '
+    $2==f1 || $2==f2 || $NF==f1 || $NF==f2 {print $1; exit}
+  ' "$sums")"
+  if [[ -z "$want" ]]; then
+    # Also allow install.sh-only sums when fetching install.sh alone
+    echo "[MrClock] WARN: SHA256SUMS has no entry for archive ${archive_base}" >&2
+    return 0
   fi
+  got="$(sha256sum "$archive" | awk '{print $1}')"
+  if [[ "$got" != "$want" ]]; then
+    echo "[MrClock] ERROR: archive SHA256 mismatch (got ${got}, want ${want})." >&2
+    return 1
+  fi
+  echo "[MrClock] Archive SHA256 verified against release asset SHA256SUMS" >&2
   return 0
 }
 
@@ -88,8 +116,6 @@ _securebox_install_persistent() {
   [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$SECUREBOX_INSTALL_DIR/LICENSE" || true
   [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$SECUREBOX_INSTALL_DIR/README.md" || true
   [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$SECUREBOX_INSTALL_DIR/CHANGELOG.md" || true
-  [[ -f "${src}/SHA256SUMS" ]] && cp -a "${src}/SHA256SUMS" "$SECUREBOX_INSTALL_DIR/SHA256SUMS" || true
-  [[ -f "${src}/SHA256SUMS.asc" ]] && cp -a "${src}/SHA256SUMS.asc" "$SECUREBOX_INSTALL_DIR/SHA256SUMS.asc" || true
   chmod 755 "$SECUREBOX_INSTALL_DIR/install.sh"
   mkdir -p "$(dirname "$SECUREBOX_BIN_LINK")"
   cat >"$SECUREBOX_BIN_LINK" <<EOF
@@ -109,16 +135,38 @@ _securebox_fetch_tree() {
   tmp="$(mktemp -d /tmp/securebox-fetch.XXXXXX)"
   archive="${tmp}/securebox.tgz"
 
-  url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
-  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} (latest) ..." >&2
+  # Prefer the release-asset tarball (named ToolBox-<tag>.tar.gz) when published;
+  # fall back to GitHub source archive.
+  local asset_archive="ToolBox-${SECUREBOX_REF}.tar.gz"
+  url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/${asset_archive}"
+  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
   if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive"; then
-    url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
+    url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
     curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
-      echo "[MrClock] ERROR: failed to download release archive." >&2
-      echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
+      url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
+      curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
+        echo "[MrClock] ERROR: failed to download release archive." >&2
+        echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
+        rm -rf "$tmp"
+        exit 1
+      }
+    }
+  fi
+
+  # Download SHA256SUMS as a SEPARATE release asset (never from inside the tarball)
+  local sums_dir="${tmp}/release-assets"
+  mkdir -p "$sums_dir"
+  local sums_url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS"
+  if curl -fsSL --connect-timeout 15 "$sums_url" -o "${sums_dir}/SHA256SUMS" 2>/dev/null; then
+    curl -fsSL --connect-timeout 15 \
+      "https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS.asc" \
+      -o "${sums_dir}/SHA256SUMS.asc" 2>/dev/null || true
+    _securebox_verify_release_assets "$archive" "$SECUREBOX_REF" "$sums_dir" || {
       rm -rf "$tmp"
       exit 1
     }
+  else
+    echo "[MrClock] WARN: SHA256SUMS release asset missing — publish it separately for integrity." >&2
   fi
 
   tar -xzf "$archive" -C "$tmp" || {
@@ -133,18 +181,6 @@ _securebox_fetch_tree() {
     echo "[MrClock] ERROR: archive layout unexpected." >&2
     rm -rf "$tmp"
     exit 1
-  fi
-
-  # Download SHA256SUMS from the release assets when available
-  local sums_url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS"
-  if curl -fsSL --connect-timeout 15 "$sums_url" -o "${extracted}/SHA256SUMS" 2>/dev/null; then
-    curl -fsSL --connect-timeout 15 \
-      "https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS.asc" \
-      -o "${extracted}/SHA256SUMS.asc" 2>/dev/null || true
-    _securebox_verify_release_integrity "$extracted" || {
-      rm -rf "$tmp"
-      exit 1
-    }
   fi
 
   printf '%s\n' "$extracted"
@@ -522,20 +558,25 @@ main() {
   detect_network_stack
   detect_dns_manager
 
-  # Auto-heal outbound abuse blocks from older betas so re-runs / updates work
-  if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
-    _abuse_repair_outbound
-  fi
-  # Auto-heal ANY artifacts that can steal DHCP/gateway
-  if declare -F heal_network_safety >/dev/null 2>&1; then
-    heal_network_safety
-  elif declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
-    heal_networkd_mtu_dropins
-  fi
+  # Dry-run: never heal, never install to /opt, never mutate firewall/state
+  if ! is_dry_run; then
+    # Auto-heal outbound abuse blocks from older betas so re-runs / updates work
+    if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
+      _abuse_repair_outbound
+    fi
+    # Auto-heal ANY artifacts that can steal DHCP/gateway
+    if declare -F heal_network_safety >/dev/null 2>&1; then
+      heal_network_safety
+    elif declare -F heal_networkd_mtu_dropins >/dev/null 2>&1; then
+      heal_networkd_mtu_dropins
+    fi
 
-  # Ensure local launcher exists for next run without curl
-  if _securebox_have_tree "${SECUREBOX_ROOT}"; then
-    _securebox_install_persistent "${SECUREBOX_ROOT}" 2>/dev/null || true
+    # Ensure local launcher exists for next run without curl
+    if _securebox_have_tree "${SECUREBOX_ROOT}"; then
+      _securebox_install_persistent "${SECUREBOX_ROOT}" 2>/dev/null || true
+    fi
+  else
+    ui_warn "DRY-RUN: skipping heal / persistent install / all /etc writes"
   fi
 
   log INFO "MrClock toolbox ${SECUREBOX_VERSION} starting on ${OS_PRETTY}"
@@ -544,8 +585,9 @@ main() {
     one_click)
       ui_banner
       defaults_one_click
-      if [[ "${SECUREBOX_DRY_RUN:-0}" == "1" ]] && declare -F show_plan_screen >/dev/null 2>&1; then
+      if is_dry_run && declare -F show_plan_screen >/dev/null 2>&1; then
         show_plan_screen
+        ui_success "Dry-run complete — no changes applied"
         exit 0
       fi
       if declare -F show_plan_screen >/dev/null 2>&1; then
