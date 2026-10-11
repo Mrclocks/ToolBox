@@ -233,8 +233,18 @@ ask_ssh() {
 ask_abuse() {
   if ui_confirm "Block curated abuse/scanner IP ranges (inbound)?" "N"; then
     SECUREBOX_ANSWERS[block_abuse]=yes
+    local profile_choice
+    ui_menu profile_choice "Abuse block profile" \
+      "minimal — known bad / bulletproof hosting only (recommended)" \
+      "aggressive — also noisy VPS hosting slices (may block cloud clients)"
+    case "$profile_choice" in
+      2) SECUREBOX_ANSWERS[abuse_profile]=aggressive ;;
+      *) SECUREBOX_ANSWERS[abuse_profile]=minimal ;;
+    esac
+    ui_info "Abuse profile: ${SECUREBOX_ANSWERS[abuse_profile]}"
   else
     SECUREBOX_ANSWERS[block_abuse]=no
+    SECUREBOX_ANSWERS[abuse_profile]=minimal
   fi
 }
 
@@ -328,7 +338,7 @@ review_answers() {
   ui_kv "SSH password" "${SECUREBOX_ANSWERS[ssh_password_auth]:-}"
   ui_kv "Root login" "${SECUREBOX_ANSWERS[ssh_permit_root]:-}"
   ui_kv "Disable IPv6" "${SECUREBOX_ANSWERS[disable_ipv6]:-}"
-  ui_kv "Block abuse ranges" "${SECUREBOX_ANSWERS[block_abuse]:-}"
+  ui_kv "Block abuse ranges" "${SECUREBOX_ANSWERS[block_abuse]:-} (${SECUREBOX_ANSWERS[abuse_profile]:-minimal})"
   ui_kv "UFW enable" "${SECUREBOX_ANSWERS[ufw_enable]:-}"
   ui_kv "UFW reset" "${SECUREBOX_ANSWERS[ufw_reset]:-}"
   ui_kv "UFW auto ports" "${SECUREBOX_ANSWERS[ufw_auto_discover]:-}"
