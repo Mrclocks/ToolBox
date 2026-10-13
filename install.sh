@@ -18,8 +18,17 @@ SECUREBOX_BIN_LINK="${SECUREBOX_BIN_LINK:-/usr/local/bin/mrclock}"
 
 # --- Bootstrap: local install first, then one-liner fetch ---
 _securebox_have_tree() {
+  # Require a complete install tree — including abuse CIDR data files.
+  # (Checking only that data/ exists allowed empty dirs to pass bootstrap,
+  # then fail later with "missing abuse ranges file".)
   local root="$1"
-  [[ -f "${root}/lib/common.sh" && -f "${root}/lib/runner.sh" && -d "${root}/modules" && -d "${root}/data" ]]
+  [[ -n "$root" ]] \
+    && [[ -f "${root}/lib/common.sh" ]] \
+    && [[ -f "${root}/lib/runner.sh" ]] \
+    && [[ -d "${root}/modules" ]] \
+    && [[ -d "${root}/data" ]] \
+    && [[ -r "${root}/data/abuse-ranges.txt" ]] \
+    && [[ -r "${root}/data/abuse-ranges-aggressive.txt" ]]
 }
 
 _securebox_resolve_ref() {

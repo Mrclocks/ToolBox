@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3 — 2026-10-13
+
+### Fixed
+- Bootstrap/`_securebox_have_tree` now requires both abuse ranges files under `data/`
+  (empty `data/` no longer passes install then fails with "missing abuse ranges file")
+- Abuse module resolves ranges paths at call time from `SECUREBOX_DATA`
+- `gen-checksums.sh` refuses to publish without both abuse ranges assets
+
 ## 0.2.2 — 2026-10-11
 
 ### Fixed
