@@ -43,14 +43,20 @@ rm -rf "${OUTDIR}/stage"
   cat SHA256SUMS
 )
 
-# Sanity: archive must contain ToolBox-<tag>/lib/common.sh
+# Sanity: archive must contain a complete tree (same bar as _securebox_have_tree)
 # (Avoid `tar | grep` under pipefail — SIGPIPE from early grep exit looks like failure.)
 listing="$(tar -tzf "${OUTDIR}/${ARCHIVE_NAME}")"
-if ! grep -qx "ToolBox-${ASSET_TAG}/lib/common.sh" <<<"$listing"; then
-  echo "ERROR: packed archive missing ToolBox-${ASSET_TAG}/lib/common.sh" >&2
-  head -n 20 <<<"$listing" >&2
-  exit 1
-fi
+for need in \
+  "ToolBox-${ASSET_TAG}/lib/common.sh" \
+  "ToolBox-${ASSET_TAG}/data/abuse-ranges.txt" \
+  "ToolBox-${ASSET_TAG}/data/abuse-ranges-aggressive.txt"
+do
+  if ! grep -qx "$need" <<<"$listing"; then
+    echo "ERROR: packed archive missing ${need}" >&2
+    head -n 20 <<<"$listing" >&2
+    exit 1
+  fi
+done
 
 echo
 echo "Publish these as GitHub Release assets (separate from source zip):"

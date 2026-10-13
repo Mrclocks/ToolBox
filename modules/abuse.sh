@@ -3,8 +3,13 @@
 # Applies ONLY when SECUREBOX_ANSWERS[block_abuse] is explicitly yes.
 # shellcheck shell=bash
 
-ABUSE_RANGES_FILE="${SECUREBOX_DATA}/abuse-ranges.txt"
-ABUSE_RANGES_AGGRESSIVE="${SECUREBOX_DATA}/abuse-ranges-aggressive.txt"
+# Resolve at call time (not source time) so SECUREBOX_DATA cannot go stale.
+_abuse_ranges_minimal() {
+  printf '%s\n' "${SECUREBOX_DATA}/abuse-ranges.txt"
+}
+_abuse_ranges_aggressive() {
+  printf '%s\n' "${SECUREBOX_DATA}/abuse-ranges-aggressive.txt"
+}
 
 _abuse_load_cidrs() {
   local f="$1"
@@ -24,20 +29,23 @@ _abuse_load_cidrs() {
 _abuse_resolve_file() {
   local profile="${SECUREBOX_ANSWERS[abuse_profile]:-minimal}"
   local custom="${SECUREBOX_ANSWERS[abuse_file]:-}"
+  local minimal aggressive
+  minimal="$(_abuse_ranges_minimal)"
+  aggressive="$(_abuse_ranges_aggressive)"
   if [[ -n "$custom" && -r "$custom" ]]; then
     printf '%s\n' "$custom"
     return 0
   fi
   case "${profile,,}" in
     aggressive)
-      if [[ -r "$ABUSE_RANGES_AGGRESSIVE" ]]; then
-        printf '%s\n' "$ABUSE_RANGES_AGGRESSIVE"
+      if [[ -r "$aggressive" ]]; then
+        printf '%s\n' "$aggressive"
       else
-        printf '%s\n' "$ABUSE_RANGES_FILE"
+        printf '%s\n' "$minimal"
       fi
       ;;
     *)
-      printf '%s\n' "$ABUSE_RANGES_FILE"
+      printf '%s\n' "$minimal"
       ;;
   esac
 }
