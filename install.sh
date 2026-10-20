@@ -334,6 +334,8 @@ source "${SECUREBOX_ROOT}/lib/rollback.sh"
 # shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/plan.sh"
 # shellcheck disable=SC1091
+source "${SECUREBOX_ROOT}/lib/pgclockmg.sh"
+# shellcheck disable=SC1091
 source "${SECUREBOX_ROOT}/lib/runner.sh"
 
 source_modules

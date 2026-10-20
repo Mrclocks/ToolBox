@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2 — 2026-10-20
+
+### Added
+- **Backup / Restore & Migrate (Phase 3)** — ToolBox UI bridge to PGClockMG:
+  - Backup: Install/Update, Open URL + setup token, Status, Uninstall (PGClockBackup)
+  - Restore & Migrate: Install/Update wizard, Open URL + access token, Status,
+    Uninstall, Redirect server (3x-ui / Hiddify)
+  - Shared `lib/pgclockmg.sh` downloads upstream installer with
+    `PG_MIGRATOR_ACTION` / port / `PG_MIGRATOR_YES=1`
+
 ## 0.3.1 — 2026-10-20
 
 ### Added

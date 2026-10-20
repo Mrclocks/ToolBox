@@ -65,8 +65,8 @@ Categorized menu:
 1. **Optimization** — Apply All, DNS/MTU/BBR, UFW, SSH, Fail2Ban, abuse block, undo
 2. **SSL Certificates** — PasarGuard Panel/Node issue + auto-renew (acme.sh)
 3. **Reverse Proxy** — HAProxy single-port (panel/node), Caddy, Nginx
-4. **Backup** — PGClockBackup bridge (rolling out)
-5. **Restore & Migrate** — PGClockMG wizard bridge (rolling out)
+4. **Backup** — Install/open PGClockBackup (ToolBox UI → upstream installer)
+5. **Restore & Migrate** — PGClockMG wizard + redirect helpers
 
 Optimization details:
 
