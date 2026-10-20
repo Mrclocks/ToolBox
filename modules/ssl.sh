@@ -246,11 +246,14 @@ deploy_panel() {
     chmod 644 "${PANEL_DIR}/${d}.cer"
     chmod 600 "${PANEL_DIR}/${d}.cer.key"
   done
-  # Combined PEM for HAProxy consumers (optional)
+  # Combined PEM for HAProxy (ToolBox Reverse Proxy reads /etc/haproxy/certs/)
   mkdir -p /etc/haproxy/certs 2>/dev/null || true
   if [[ -d /etc/haproxy/certs ]]; then
-    cat "$SRC_CERT" "$SRC_KEY" >"/etc/haproxy/certs/${PRIMARY}.pem"
-    chmod 600 "/etc/haproxy/certs/${PRIMARY}.pem"
+    local d
+    for d in $DOMAINS; do
+      cat "$SRC_CERT" "$SRC_KEY" >"/etc/haproxy/certs/${d}.pem"
+      chmod 600 "/etc/haproxy/certs/${d}.pem"
+    done
     if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet haproxy 2>/dev/null; then
       systemctl reload haproxy >/dev/null 2>&1 || true
     fi

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1 — 2026-10-20
+
+### Added
+- **Reverse Proxy (Phase 2)**:
+  - HAProxy panel single-port (HTTPS + optional extra ports, Host ACL, deny default)
+  - HAProxy node TCP/SNI mode (REALITY `send-proxy` + fallback)
+  - Caddy auto-HTTPS reverse proxy
+  - Nginx reverse proxy using ToolBox/PasarGuard certificates
+  - Status / Remove with config backup restore
+  - End guide: set panel `.env` to local HTTP (no `UVICORN_SSL_*`)
+
 ## 0.3.0 — 2026-10-20
 
 ### Added
@@ -8,8 +19,7 @@
 - **SSL Certificates**: acme.sh issue, multi-domain (SAN), Panel/Node path
   deploy, auto-renew cron + deploy hook, Status / Renew now
 - End-of-setup guide prints exact `.env` / compose `SSL_*` paths for Panel and Node
-- Scaffold menus for Reverse Proxy (HAProxy/Caddy/Nginx) and PGClockMG
-  Backup / Restore & Migrate bridges
+- Scaffold menus for PGClockMG Backup / Restore & Migrate bridges
 
 ### Changed
 - Toolbox undo renamed to **Undo Toolbox Changes** (under Optimization)
