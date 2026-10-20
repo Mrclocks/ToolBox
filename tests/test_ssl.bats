@@ -113,3 +113,38 @@ EOF
   grep -q 'PGClockBackup' "${REPO_ROOT}/docs/OPS.md"
   grep -q 'HAProxy' "${REPO_ROOT}/docs/OPS.md"
 }
+
+@test "_ssl_env_upsert replaces previous path and comments UDS" {
+  local envf="${SECUREBOX_STATE_DIR}/panel.env"
+  cat >"$envf" <<'EOF'
+UVICORN_HOST = "0.0.0.0"
+UVICORN_PORT = 8000
+UVICORN_SSL_CERTFILE = "/old/path.cer"
+UVICORN_SSL_KEYFILE = "/old/path.key"
+UVICORN_UDS = "/var/lib/pasarguard/pasarguard.socket"
+EOF
+  _ssl_env_upsert "$envf" "UVICORN_SSL_CERTFILE" "/var/lib/pasarguard/certs/a.cer" spaced
+  _ssl_env_upsert "$envf" "UVICORN_SSL_KEYFILE" "/var/lib/pasarguard/certs/a.cer.key" spaced
+  _ssl_env_upsert "$envf" "UVICORN_PORT" "443" spaced
+  _ssl_env_comment_key "$envf" "UVICORN_UDS"
+  grep -q 'UVICORN_SSL_CERTFILE = "/var/lib/pasarguard/certs/a.cer"' "$envf"
+  grep -q 'UVICORN_SSL_KEYFILE = "/var/lib/pasarguard/certs/a.cer.key"' "$envf"
+  grep -qE 'UVICORN_PORT = "?443"?' "$envf"
+  ! grep -qE '^[[:space:]]*UVICORN_SSL_CERTFILE = "/old/' "$envf"
+  grep -qE '^# UVICORN_UDS' "$envf"
+}
+
+@test "_ssl_compose_upsert_env updates YAML env keys" {
+  local yml="${SECUREBOX_STATE_DIR}/compose.yml"
+  cat >"$yml" <<'EOF'
+services:
+  node:
+    environment:
+      SSL_CERT_FILE: "/old/ssl_cert.pem"
+      SSL_KEY_FILE: "/old/ssl_key.pem"
+EOF
+  _ssl_compose_upsert_env "$yml" "SSL_CERT_FILE" "/var/lib/pg-node/certs/ssl_cert.pem"
+  _ssl_compose_upsert_env "$yml" "SSL_KEY_FILE" "/var/lib/pg-node/certs/ssl_key.pem"
+  grep -q 'SSL_CERT_FILE: "/var/lib/pg-node/certs/ssl_cert.pem"' "$yml"
+  grep -q 'SSL_KEY_FILE: "/var/lib/pg-node/certs/ssl_key.pem"' "$yml"
+}

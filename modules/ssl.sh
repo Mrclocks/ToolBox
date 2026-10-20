@@ -501,54 +501,218 @@ _ssl_issue_cert() {
   return 0
 }
 
+# Upsert KEY in a dotenv-style file. style=spaced → KEY = "value" (panel);
+# style=bare → KEY=value or KEY = value without forcing quotes when bare.
+_ssl_env_upsert() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local style="${4:-spaced}"
+  local tmp line
+  [[ -n "$file" && -n "$key" ]] || return 1
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  tmp="$(mktemp)"
+  # Drop existing assignments (active or commented) for this key
+  grep -vE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]*=" "$file" >"$tmp" 2>/dev/null || true
+  # Keep a trailing newline
+  if [[ -s "$tmp" ]] && [[ "$(tail -c1 "$tmp" | wc -l)" -eq 0 ]]; then
+    printf '\n' >>"$tmp"
+  fi
+  case "$style" in
+    bare)
+      printf '%s = %s\n' "$key" "$value" >>"$tmp"
+      ;;
+    *)
+      printf '%s = "%s"\n' "$key" "$value" >>"$tmp"
+      ;;
+  esac
+  cat "$tmp" >"$file"
+  rm -f "$tmp"
+  return 0
+}
+
+_ssl_env_comment_key() {
+  # Comment out active KEY= lines (leave already-commented alone)
+  local file="$1"
+  local key="$2"
+  local tmp
+  [[ -f "$file" ]] || return 0
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*= ]]; then
+      printf '# %s\n' "$(trim "$line")" >>"$tmp"
+    else
+      printf '%s\n' "$line" >>"$tmp"
+    fi
+  done <"$file"
+  cat "$tmp" >"$file"
+  rm -f "$tmp"
+}
+
+_ssl_compose_upsert_env() {
+  # Update environment: KEY: "value" (or KEY: value) inside a compose YAML (best-effort)
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  [[ -f "$file" ]] || return 1
+  tmp="$(mktemp)"
+  if grep -qE "^[[:space:]]*${key}:[[:space:]]*" "$file"; then
+    sed -E "s|^([[:space:]]*${key}:[[:space:]]*).*$|\1\"${value}\"|" "$file" >"$tmp"
+    cat "$tmp" >"$file"
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+_ssl_restart_compose() {
+  local dir="$1"
+  local label="$2"
+  [[ -d "$dir" ]] || return 0
+  [[ -f "${dir}/docker-compose.yml" || -f "${dir}/compose.yml" ]] || return 0
+  if ! have_cmd docker; then
+    ui_warn "docker not found — restart ${label} manually: cd ${dir} && docker compose restart"
+    return 0
+  fi
+  ui_info "Restarting ${label}..."
+  if (cd "$dir" && docker compose restart >/dev/null 2>&1) \
+      || (cd "$dir" && docker-compose restart >/dev/null 2>&1); then
+    ui_success "${label} restarted"
+  else
+    ui_warn "Could not restart ${label} — run: cd ${dir} && docker compose restart"
+  fi
+}
+
+_ssl_apply_env_paths() {
+  # Write certificate paths into Panel/Node env (and node compose) automatically.
+  local role="$1"
+  local primary="$2"
+  local panel_env="/opt/pasarguard/.env"
+  local node_env="/opt/pg-node/.env"
+  local node_compose="/opt/pg-node/docker-compose.yml"
+  local cert_path key_path applied=0
+
+  case "$role" in
+    panel|both)
+      if [[ -d /opt/pasarguard ]]; then
+        cert_path="${SSL_PANEL_CERT_DIR}/${primary}.cer"
+        key_path="${SSL_PANEL_CERT_DIR}/${primary}.cer.key"
+        if [[ -f "$panel_env" ]]; then
+          if declare -F backup_file >/dev/null 2>&1; then
+            backup_file "$panel_env" || true
+          else
+            cp -a "$panel_env" "${panel_env}.bak.mrclock.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+          fi
+        else
+          touch "$panel_env"
+          chmod 600 "$panel_env"
+        fi
+        _ssl_env_upsert "$panel_env" "UVICORN_SSL_CERTFILE" "$cert_path" spaced
+        _ssl_env_upsert "$panel_env" "UVICORN_SSL_KEYFILE" "$key_path" spaced
+        _ssl_env_upsert "$panel_env" "UVICORN_PORT" "443" bare
+        # Direct TLS mode — UDS is for reverse-proxy setups
+        _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
+        ui_success "Panel .env updated: ${panel_env}"
+        ui_kv "UVICORN_SSL_CERTFILE" "$cert_path"
+        ui_kv "UVICORN_SSL_KEYFILE" "$key_path"
+        ui_kv "UVICORN_PORT" "443"
+        _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
+        applied=1
+      else
+        ui_warn "Panel dir /opt/pasarguard not found — skipped .env auto-update"
+      fi
+      ;;
+  esac
+
+  case "$role" in
+    node|both)
+      if [[ -d /opt/pg-node ]] || [[ -d "$SSL_NODE_CERT_DIR" ]]; then
+        cert_path="${SSL_NODE_CERT_DIR}/ssl_cert.pem"
+        key_path="${SSL_NODE_CERT_DIR}/ssl_key.pem"
+        if [[ -d /opt/pg-node ]]; then
+          if [[ -f "$node_env" ]]; then
+            if declare -F backup_file >/dev/null 2>&1; then
+              backup_file "$node_env" || true
+            else
+              cp -a "$node_env" "${node_env}.bak.mrclock.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+            fi
+          else
+            touch "$node_env"
+            chmod 600 "$node_env" 2>/dev/null || true
+          fi
+          _ssl_env_upsert "$node_env" "SSL_CERT_FILE" "$cert_path" bare
+          _ssl_env_upsert "$node_env" "SSL_KEY_FILE" "$key_path" bare
+          ui_success "Node .env updated: ${node_env}"
+          ui_kv "SSL_CERT_FILE" "$cert_path"
+          ui_kv "SSL_KEY_FILE" "$key_path"
+          if [[ -f "$node_compose" ]]; then
+            if declare -F backup_file >/dev/null 2>&1; then
+              backup_file "$node_compose" || true
+            fi
+            _ssl_compose_upsert_env "$node_compose" "SSL_CERT_FILE" "$cert_path" || true
+            _ssl_compose_upsert_env "$node_compose" "SSL_KEY_FILE" "$key_path" || true
+            ui_info "Node docker-compose SSL paths refreshed (if keys were present)"
+          fi
+          _ssl_restart_compose /opt/pg-node "PasarGuard node"
+          applied=1
+        else
+          ui_warn "Node install dir /opt/pg-node not found — cert files are on disk only"
+          ui_kv "SSL_CERT_FILE" "$cert_path"
+          ui_kv "SSL_KEY_FILE" "$key_path"
+        fi
+      fi
+      ;;
+  esac
+
+  if (( applied == 0 )); then
+    ui_info "No Panel/Node install dirs found — paths were not written to .env"
+  fi
+  return 0
+}
+
 _ssl_print_env_guide() {
   local role="$1"
   local primary="$2"
   shift 2
   local -a domains=("$@")
-  local d panel_env node_compose
+  local d
 
-  ui_box_start "How to set certificate paths"
+  ui_box_start "Certificate paths"
   case "$role" in
     panel|both)
-      panel_env="/opt/pasarguard/.env"
-      ui_info "Panel — edit ${panel_env} (or create keys if missing):"
-      echo
-      printf '   UVICORN_SSL_CERTFILE = "%s/%s.cer"\n' "$SSL_PANEL_CERT_DIR" "$primary"
-      printf '   UVICORN_SSL_KEYFILE  = "%s/%s.cer.key"\n' "$SSL_PANEL_CERT_DIR" "$primary"
-      printf '   UVICORN_PORT = 443\n'
-      echo
-      if ((${#domains[@]} > 1)); then
-        ui_info "Same certificate covers all domains (SAN). Per-domain copies also exist:"
-        for d in "${domains[@]}"; do
-          ui_kv "$d" "${SSL_PANEL_CERT_DIR}/${d}.cer + ${d}.cer.key"
-        done
-        echo
+      ui_kv "Panel cert" "${SSL_PANEL_CERT_DIR}/${primary}.cer"
+      ui_kv "Panel key" "${SSL_PANEL_CERT_DIR}/${primary}.cer.key"
+      if [[ -f /opt/pasarguard/.env ]]; then
+        ui_success "Written into /opt/pasarguard/.env (UVICORN_SSL_* + PORT=443)"
+      else
+        ui_info "If you install the panel later, re-run SSL → Show .env / path instructions"
+        printf '   UVICORN_SSL_CERTFILE = "%s/%s.cer"\n' "$SSL_PANEL_CERT_DIR" "$primary"
+        printf '   UVICORN_SSL_KEYFILE  = "%s/%s.cer.key"\n' "$SSL_PANEL_CERT_DIR" "$primary"
+        printf '   UVICORN_PORT = 443\n'
       fi
-      ui_info "Then restart the panel:"
-      printf '   cd /opt/pasarguard && docker compose restart\n'
-      echo
+      if ((${#domains[@]} > 1)); then
+        ui_info "SAN aliases also on disk:"
+        for d in "${domains[@]}"; do
+          ui_kv "$d" "${SSL_PANEL_CERT_DIR}/${d}.cer"
+        done
+      fi
       ;;
   esac
   case "$role" in
     node|both)
-      node_compose="/opt/pg-node/docker-compose.yml"
-      ui_info "Node — certificate files are ready at:"
-      ui_kv "SSL_CERT_FILE" "${SSL_NODE_CERT_DIR}/ssl_cert.pem"
-      ui_kv "SSL_KEY_FILE" "${SSL_NODE_CERT_DIR}/ssl_key.pem"
-      echo
-      ui_info "In ${node_compose} (or node .env / environment), set:"
-      echo
-      printf '   SSL_CERT_FILE: "%s/ssl_cert.pem"\n' "$SSL_NODE_CERT_DIR"
-      printf '   SSL_KEY_FILE:  "%s/ssl_key.pem"\n' "$SSL_NODE_CERT_DIR"
-      echo
-      ui_info "In the PasarGuard panel → Nodes → this node, use the same paths if asked."
-      ui_info "Then restart the node:"
-      printf '   cd /opt/pg-node && docker compose restart\n'
-      echo
+      ui_kv "Node cert" "${SSL_NODE_CERT_DIR}/ssl_cert.pem"
+      ui_kv "Node key" "${SSL_NODE_CERT_DIR}/ssl_key.pem"
+      if [[ -f /opt/pg-node/.env ]]; then
+        ui_success "Written into /opt/pg-node/.env (SSL_CERT_FILE / SSL_KEY_FILE)"
+      fi
+      ui_info "In PasarGuard panel → Nodes, use the same paths if the UI asks."
       ;;
   esac
-  ui_info "Auto-renew is ON (acme.sh cron). After each renew, files are redeployed automatically."
+  ui_info "Note: if you later put HAProxy/Caddy in front, switch panel to local HTTP (no UVICORN_SSL_*)."
+  ui_info "Auto-renew is ON — files redeploy automatically; .env paths stay the same."
   ui_box_end
 }
 
@@ -625,6 +789,8 @@ ssl_issue_interactive() {
   fi
 
   ui_success "Certificate installed and auto-renew enabled"
+  ui_step "Updating Panel/Node .env paths"
+  _ssl_apply_env_paths "$role" "$SSL_PRIMARY"
   _ssl_print_env_guide "$role" "$SSL_PRIMARY" "${SSL_DOMAINS_ARR[@]}"
   return 0
 }
@@ -719,6 +885,7 @@ ssl_renew_now() {
     local -a doms=()
     # shellcheck disable=SC2206
     doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
+    _ssl_apply_env_paths "${SSL_ROLE:-panel}" "$SSL_PRIMARY"
     _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
     return 0
   fi
@@ -737,6 +904,9 @@ ssl_show_env_guide() {
   local -a doms=()
   # shellcheck disable=SC2206
   doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
+  if ui_confirm "Re-apply certificate paths into Panel/Node .env now?" "Y"; then
+    _ssl_apply_env_paths "${SSL_ROLE:-panel}" "$SSL_PRIMARY"
+  fi
   _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
 }
 

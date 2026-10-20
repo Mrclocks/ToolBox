@@ -32,15 +32,18 @@ Menu:
 
 Preflight checks DNS (soft) and that port **80** is free for ACME HTTP-01.
 
-Panel `.env` example (direct TLS, no reverse proxy):
+After **Issue / Setup**, ToolBox **automatically** writes paths into:
 
-```text
-UVICORN_SSL_CERTFILE = "/var/lib/pasarguard/certs/example.com.cer"
-UVICORN_SSL_KEYFILE  = "/var/lib/pasarguard/certs/example.com.cer.key"
-UVICORN_PORT = 443
-```
+- Panel: `/opt/pasarguard/.env` → `UVICORN_SSL_CERTFILE`, `UVICORN_SSL_KEYFILE`, `UVICORN_PORT=443`
+  (and comments out `UVICORN_UDS` for direct TLS)
+- Node: `/opt/pg-node/.env` (+ compose `SSL_CERT_FILE` / `SSL_KEY_FILE` when present)
 
-Behind HAProxy/Nginx (recommended): remove `UVICORN_SSL_*` and listen on `127.0.0.1:8000`.
+Then it restarts the matching docker compose stack when possible.
+
+Behind HAProxy/Nginx later: remove `UVICORN_SSL_*` and listen on `127.0.0.1:8000`
+(Reverse Proxy setup prints that guide).
+
+Menu item **Show .env / path instructions** can re-apply the same writes.
 
 ## Reverse Proxy
 

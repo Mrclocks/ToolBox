@@ -87,7 +87,7 @@ SSL details:
 - Auto-detect Panel vs Node paths; multi-domain SAN
 - Preflight: DNS hint + port 80 check
 - Deploys to `/var/lib/pasarguard/certs/` and/or `/var/lib/pg-node/certs/`
-- Prints exact `.env` / `SSL_CERT_FILE` settings after install
+- Auto-writes Panel/Node `.env` certificate paths (and restarts compose)
 - Auto-renew via acme.sh cron + deploy hook (Repair menu if cron missing)
 
 Reverse proxy / backup: see [docs/OPS.md](docs/OPS.md).
