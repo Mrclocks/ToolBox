@@ -76,4 +76,5 @@ setup() {
   grep -q 'Setup Caddy' "${REPO_ROOT}/modules/proxy.sh"
   grep -q 'Setup Nginx' "${REPO_ROOT}/modules/proxy.sh"
   grep -q 'Status / Remove' "${REPO_ROOT}/modules/proxy.sh"
+  grep -q '_proxy_warn_conflicts' "${REPO_ROOT}/modules/proxy.sh"
 }

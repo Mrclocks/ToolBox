@@ -19,11 +19,21 @@ SSL_ACME_BIN="${SSL_ACME_BIN:-${SSL_ACME_HOME}/acme.sh}"
 _ssl_detect_role() {
   # Prints: panel | node | both | none
   local has_panel=0 has_node=0
-  if [[ -d /opt/pasarguard ]] || [[ -d "$SSL_PANEL_ROOT" ]] || [[ -f /opt/pasarguard/.env ]]; then
+  if [[ -d /opt/pasarguard ]] || [[ -d "$SSL_PANEL_ROOT" ]] || [[ -f /opt/pasarguard/.env ]] \
+      || [[ -f /opt/pasarguard/docker-compose.yml ]]; then
     has_panel=1
   fi
   if [[ -d /opt/pg-node ]] || [[ -d "$SSL_NODE_ROOT" ]] || [[ -f /opt/pg-node/docker-compose.yml ]]; then
     has_node=1
+  fi
+  # Docker image name hints (best-effort)
+  if have_cmd docker; then
+    if docker ps --format '{{.Image}}' 2>/dev/null | grep -qiE 'pasarguard/panel|pasarguard.panel'; then
+      has_panel=1
+    fi
+    if docker ps --format '{{.Image}}' 2>/dev/null | grep -qiE 'pasarguard/node|pasarguard.node|pg-node'; then
+      has_node=1
+    fi
   fi
   if (( has_panel && has_node )); then
     printf 'both\n'
@@ -86,6 +96,100 @@ _ssl_port80_busy() {
     return $?
   fi
   return 1
+}
+
+_ssl_port80_owner() {
+  # Best-effort process/service name holding :80
+  local line=""
+  if have_cmd ss; then
+    line="$(ss -tlnp 2>/dev/null | grep -E ':80\s' | head -n1 || true)"
+  fi
+  if [[ -n "$line" ]]; then
+    if [[ "$line" =~ users:\(\(\"([^\"]+)\" ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+    # Fallback: last users= chunk
+    if [[ "$line" =~ \"([a-zA-Z0-9._-]+)\" ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  fi
+  local svc
+  for svc in haproxy nginx caddy apache2 httpd; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+      printf '%s\n' "$svc"
+      return 0
+    fi
+  done
+  printf 'unknown\n'
+  return 0
+}
+
+_ssl_public_ip() {
+  local ip=""
+  if have_cmd hostname; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [[ -z "$ip" ]] && have_cmd ip; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"
+  fi
+  printf '%s\n' "${ip:-}"
+}
+
+_ssl_dns_points_here() {
+  # Soft check: domain A/AAAA resolves to this host. Returns 0 if OK or unverifiable.
+  local domain="$1"
+  local self_ip resolved=""
+  self_ip="$(_ssl_public_ip)"
+  [[ -n "$self_ip" ]] || return 0
+  if have_cmd dig; then
+    resolved="$(dig +short A "$domain" 2>/dev/null | grep -E '^[0-9.]+$' | head -n1 || true)"
+  elif have_cmd getent; then
+    resolved="$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1; exit}')"
+  elif have_cmd host; then
+    resolved="$(host -t A "$domain" 2>/dev/null | awk '/has address/{print $4; exit}')"
+  else
+    return 0
+  fi
+  [[ -n "$resolved" ]] || return 1
+  [[ "$resolved" == "$self_ip" ]]
+}
+
+_ssl_preflight_issue() {
+  # Warn about DNS + port 80 before ACME standalone. Returns 1 only on hard abort.
+  local -a domains=("$@")
+  local d owner self_ip
+  self_ip="$(_ssl_public_ip)"
+  ui_box_start "SSL preflight"
+  ui_kv "Server IP" "${self_ip:-(unknown)}"
+  for d in "${domains[@]}"; do
+    if _ssl_dns_points_here "$d"; then
+      ui_success "DNS looks OK for ${d}"
+    else
+      ui_warn "DNS for ${d} may not point to this server — Let's Encrypt will fail if A/AAAA is wrong"
+    fi
+  done
+  if _ssl_port80_busy; then
+    owner="$(_ssl_port80_owner)"
+    ui_warn "Port 80 is in use (likely: ${owner}). ACME HTTP-01 needs :80 free."
+    ui_info "Fix: temporarily stop that service, or finish Reverse Proxy setup after SSL."
+    if have_tty; then
+      if ! ui_confirm "Continue anyway?" "N"; then
+        ui_box_end
+        ui_error "Aborted — free port 80, then retry Issue / Setup."
+        return 1
+      fi
+    else
+      ui_box_end
+      ui_error "Port 80 busy and no TTY to confirm. Aborting."
+      return 1
+    fi
+  else
+    ui_success "Port 80 is free"
+  fi
+  ui_box_end
+  return 0
 }
 
 _ssl_ensure_dirs() {
@@ -352,17 +456,8 @@ _ssl_issue_cert() {
   local keyfile="${SSL_STATE_DIR}/live/key.pem"
   mkdir -p "${SSL_STATE_DIR}/live"
 
-  if _ssl_port80_busy; then
-    ui_warn "Port 80 is in use. ACME HTTP-01 (standalone) needs port 80 free."
-    if have_tty; then
-      if ! ui_confirm "Continue anyway? (stop whatever holds :80 first, or this will fail)" "N"; then
-        ui_error "Aborted — free port 80, then retry."
-        return 1
-      fi
-    else
-      ui_error "Port 80 busy and no TTY to confirm. Aborting."
-      return 1
-    fi
+  if ! _ssl_preflight_issue "${domains[@]}"; then
+    return 1
   fi
 
   ui_info "Requesting certificate for: ${domains[*]}"
@@ -627,8 +722,63 @@ ssl_renew_now() {
     _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
     return 0
   fi
-  ui_error "Renew failed — see acme.sh logs under ${SSL_ACME_HOME}"
+  ui_error "Renew failed — check DNS, port 80, and logs under ${SSL_ACME_HOME}"
+  ui_info "Tip: SSL → Repair auto-renew, then retry Renew now"
   return 1
+}
+
+ssl_show_env_guide() {
+  ui_step "SSL — .env / path instructions"
+  _ssl_load_config
+  if [[ -z "${SSL_PRIMARY:-}" ]]; then
+    ui_warn "No saved SSL config yet. Run Issue / Setup first."
+    return 0
+  fi
+  local -a doms=()
+  # shellcheck disable=SC2206
+  doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
+  _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
+}
+
+ssl_repair_autorenew() {
+  ui_step "SSL — Repair auto-renew"
+  if is_dry_run; then
+    ui_info "[dry-run] Would reinstall acme.sh cron + deploy hook"
+    return 0
+  fi
+  _ssl_load_config
+  if [[ -z "${SSL_PRIMARY:-}" ]]; then
+    ui_error "No saved SSL config. Run Issue / Setup first."
+    return 1
+  fi
+  if [[ ! -x "$SSL_ACME_BIN" ]]; then
+    if ! _ssl_ensure_acme "${SSL_EMAIL:-}"; then
+      return 1
+    fi
+  fi
+  _ssl_write_deploy_hook
+  local fullchain="${SSL_STATE_DIR}/live/fullchain.cer"
+  local keyfile="${SSL_STATE_DIR}/live/key.pem"
+  mkdir -p "${SSL_STATE_DIR}/live"
+  if [[ -f "$fullchain" && -f "$keyfile" ]]; then
+    if ! "$SSL_ACME_BIN" --install-cert -d "$SSL_PRIMARY" --ecc \
+        --fullchain-file "$fullchain" --key-file "$keyfile" \
+        --reloadcmd "$SSL_DEPLOY_HOOK" 2>/dev/null; then
+      "$SSL_ACME_BIN" --install-cert -d "$SSL_PRIMARY" \
+        --fullchain-file "$fullchain" --key-file "$keyfile" \
+        --reloadcmd "$SSL_DEPLOY_HOOK" || true
+    fi
+  fi
+  "$SSL_ACME_BIN" --install-cronjob >/dev/null 2>&1 || true
+  if crontab -l 2>/dev/null | grep -q 'acme.sh'; then
+    ui_success "Auto-renew cron repaired"
+  else
+    ui_warn "Cron still missing — check that cron package is installed"
+  fi
+  if [[ -x "$SSL_DEPLOY_HOOK" ]]; then
+    ui_success "Deploy hook OK: ${SSL_DEPLOY_HOOK}"
+  fi
+  return 0
 }
 
 ssl_menu_loop() {
@@ -640,6 +790,8 @@ ssl_menu_loop() {
     printf '  %s 1)%s Issue / Setup (recommended)\n' "$C_GREEN" "$C_RESET"
     printf '  %s 2)%s Status\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 3)%s Renew now\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 4)%s Show .env / path instructions\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 5)%s Repair auto-renew\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
     ui_line 56 '-'
     local choice
@@ -650,6 +802,8 @@ ssl_menu_loop() {
       1) ui_clear; ssl_issue_interactive; ui_pause ;;
       2) ui_clear; ssl_status; ui_pause ;;
       3) ui_clear; ssl_renew_now; ui_pause ;;
+      4) ui_clear; ssl_show_env_guide; ui_pause ;;
+      5) ui_clear; ssl_repair_autorenew; ui_pause ;;
       0|b|B) return 0 ;;
       *) ui_warn "Invalid selection."; sleep 1 ;;
     esac

@@ -1,6 +1,9 @@
 # MrClock ToolBox
 
-VPN hardening & optimization for **Ubuntu 22–26** and **Debian 12–13**.
+PasarGuard ops toolbox for **Ubuntu 22–26** and **Debian 12–13**:
+hardening, SSL, reverse proxy, and PGClockMG backup/restore bridges.
+
+Ops details: [docs/OPS.md](docs/OPS.md).
 
 ## Install
 
@@ -82,9 +85,12 @@ Optimization details:
 SSL details:
 
 - Auto-detect Panel vs Node paths; multi-domain SAN
+- Preflight: DNS hint + port 80 check
 - Deploys to `/var/lib/pasarguard/certs/` and/or `/var/lib/pg-node/certs/`
 - Prints exact `.env` / `SSL_CERT_FILE` settings after install
-- Auto-renew via acme.sh cron + deploy hook
+- Auto-renew via acme.sh cron + deploy hook (Repair menu if cron missing)
+
+Reverse proxy / backup: see [docs/OPS.md](docs/OPS.md).
 
 Rule #1: never lock out the admin or cut connectivity.
 

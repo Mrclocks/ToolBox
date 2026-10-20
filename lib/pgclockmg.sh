@@ -152,6 +152,23 @@ _pgmg_run_installer() {
   return "$rc"
 }
 
+_pgmg_ensure_service() {
+  local svc="$1"
+  if _pgmg_service_active "$svc"; then
+    return 0
+  fi
+  ui_info "Starting ${svc}..."
+  if systemctl start "$svc" >/dev/null 2>&1; then
+    sleep 1
+    if _pgmg_service_active "$svc"; then
+      ui_success "${svc} is active"
+      return 0
+    fi
+  fi
+  ui_warn "Could not start ${svc} — systemctl status ${svc}"
+  return 1
+}
+
 _pgmg_print_wizard_access() {
   local ip port token url
   ip="$(_pgmg_server_ip)"

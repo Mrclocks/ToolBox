@@ -40,10 +40,7 @@ pgrestore_open() {
     fi
     return 0
   fi
-  if ! _pgmg_service_active "$PG_WIZARD_SERVICE"; then
-    ui_info "Starting ${PG_WIZARD_SERVICE}..."
-    systemctl start "$PG_WIZARD_SERVICE" >/dev/null 2>&1 || true
-  fi
+  _pgmg_ensure_service "$PG_WIZARD_SERVICE" || true
   _pgmg_print_wizard_access
 }
 

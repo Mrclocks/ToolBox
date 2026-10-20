@@ -36,11 +36,7 @@ pgbackup_open() {
     fi
     return 0
   fi
-  # Ensure service is up when possible
-  if ! _pgmg_service_active "$PG_BACKUP_SERVICE"; then
-    ui_info "Starting ${PG_BACKUP_SERVICE}..."
-    systemctl start "$PG_BACKUP_SERVICE" >/dev/null 2>&1 || true
-  fi
+  _pgmg_ensure_service "$PG_BACKUP_SERVICE" || true
   _pgmg_print_backup_access
 }
 

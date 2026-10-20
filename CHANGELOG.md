@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3 — 2026-10-20
+
+### Added
+- **Polish (Phase 4)**:
+  - SSL preflight (DNS soft-check + port 80 owner)
+  - SSL menu: Show `.env` instructions · Repair auto-renew
+  - Stronger Panel/Node detection (compose + docker image names)
+  - Reverse Proxy conflict warning (stop other engine on :443)
+  - PGClockMG Open ensures systemd service is started
+  - `docs/OPS.md` ops reference for SSL / Proxy / Backup
+
 ## 0.3.2 — 2026-10-20
 
 ### Added

@@ -95,3 +95,21 @@ EOF
   # No Arabic/Persian script in menu entry points
   ! grep -E 'بهینه|بکاپ|ریستور|سرتیفیکیت|منو' "${REPO_ROOT}/install.sh"
 }
+
+@test "SSL menu includes env guide and repair entries" {
+  grep -q 'Show .env / path instructions' "${REPO_ROOT}/modules/ssl.sh"
+  grep -q 'Repair auto-renew' "${REPO_ROOT}/modules/ssl.sh"
+  grep -q '_ssl_preflight_issue' "${REPO_ROOT}/modules/ssl.sh"
+}
+
+@test "_ssl_port80_owner returns a string" {
+  run _ssl_port80_owner
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+}
+
+@test "docs/OPS.md documents SSL paths" {
+  grep -q '/var/lib/pasarguard/certs' "${REPO_ROOT}/docs/OPS.md"
+  grep -q 'PGClockBackup' "${REPO_ROOT}/docs/OPS.md"
+  grep -q 'HAProxy' "${REPO_ROOT}/docs/OPS.md"
+}

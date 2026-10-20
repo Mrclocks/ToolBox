@@ -157,6 +157,33 @@ _proxy_print_panel_guide() {
 
 # --- HAProxy ---------------------------------------------------------------
 
+_proxy_port_in_use() {
+  local port="$1"
+  if have_cmd ss; then
+    ss -tlnH 2>/dev/null | awk '{print $4}' | grep -E "(:|\\.)${port}$" >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
+
+_proxy_warn_conflicts() {
+  # Soft warnings before installing a new engine
+  local engine="$1"
+  local other
+  for other in haproxy caddy nginx; do
+    [[ "$other" == "$engine" ]] && continue
+    if systemctl is-active --quiet "$other" 2>/dev/null; then
+      ui_warn "${other} is currently active — two proxies on :443 will conflict"
+      if have_tty && ! ui_confirm "Stop ${other} before continuing?" "Y"; then
+        ui_warn "Continuing with ${other} still active — bind may fail"
+      else
+        systemctl stop "$other" >/dev/null 2>&1 || true
+        ui_info "Stopped ${other}"
+      fi
+    fi
+  done
+}
+
 _proxy_install_haproxy() {
   if have_cmd haproxy; then
     ui_info "HAProxy already installed: $(haproxy -v 2>&1 | head -n1)"
@@ -381,12 +408,13 @@ proxy_setup_haproxy() {
       return 0
     fi
 
+    _proxy_warn_conflicts haproxy
     if ! _proxy_install_haproxy; then return 1; fi
 
     local -a cert_domains=("$panel_domain")
     [[ -n "$sub_domain" ]] && cert_domains+=("$sub_domain")
     if ! _proxy_ensure_certs_for_domains "${cert_domains[@]}"; then
-      ui_info "Tip: Main menu → SSL Certificates → Issue / Setup"
+      ui_info "Tip: Main menu → SSL Certificates → Issue / Setup (needed before HAProxy/Nginx)"
       return 1
     fi
 
@@ -424,6 +452,7 @@ proxy_setup_haproxy() {
     ui_warn "Cancelled."
     return 0
   fi
+  _proxy_warn_conflicts haproxy
   if ! _proxy_install_haproxy; then return 1; fi
 
   _proxy_write_haproxy_node_cfg "$listen_https" "$reality_sni" "$reality_backend" "$fallback_backend"
@@ -484,6 +513,7 @@ proxy_setup_caddy() {
     ui_warn "Cancelled."
     return 0
   fi
+  _proxy_warn_conflicts caddy
   if ! _proxy_install_caddy; then return 1; fi
 
   _proxy_backup_file "$PROXY_CADDYFILE" "$PROXY_CADDYFILE_BAK"
@@ -570,6 +600,7 @@ proxy_setup_nginx() {
     ui_warn "Cancelled."
     return 0
   fi
+  _proxy_warn_conflicts nginx
   if ! _proxy_install_nginx; then return 1; fi
 
   mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
