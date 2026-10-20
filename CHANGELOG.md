@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.6 — 2026-10-20
+
+### Fixed
+- **HAProxy panel config** aligned with PasarGuard single-port docs:
+  `listen front`, plain `:80` (no forced redirect), optional plain `:9000`,
+  Host ACL + `/sub/` gate + `deny_backend`
+- After HAProxy panel setup, auto-prepare panel `.env` for local HTTP
+  (comment `UVICORN_SSL_*`, set `UVICORN_HOST`/`PORT` to backend)
+- Node mode uses `listen front_node` + `bind *:` like the official example
+
 ## 0.3.5 — 2026-10-20
 
 ### Changed

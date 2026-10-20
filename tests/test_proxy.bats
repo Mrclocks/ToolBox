@@ -51,24 +51,32 @@ setup() {
   grep -q 'PRIVKEY' "${PROXY_HAPROXY_CERT_DIR}/panel.example.com.pem"
 }
 
-@test "_proxy_write_haproxy_panel_cfg contains domains and backend" {
+@test "_proxy_write_haproxy_panel_cfg matches official single-port shape" {
   _proxy_write_haproxy_panel_cfg \
-    "panel.example.com" "sub.example.com" "127.0.0.1" "8000" "443" "80" "8443"
+    "panel.example.com" "sub.example.com" "127.0.0.1" "8000" "443" "80" "8443" "9000"
   [ -f "$PROXY_HAPROXY_CFG" ]
+  grep -q 'listen front' "$PROXY_HAPROXY_CFG"
   grep -q 'panel.example.com' "$PROXY_HAPROXY_CFG"
   grep -q 'sub.example.com' "$PROXY_HAPROXY_CFG"
   grep -q '127.0.0.1:8000' "$PROXY_HAPROXY_CFG"
   grep -q 'bind :::443' "$PROXY_HAPROXY_CFG"
+  grep -q 'bind :::80' "$PROXY_HAPROXY_CFG"
   grep -q 'bind :::8443' "$PROXY_HAPROXY_CFG"
+  grep -q 'bind 0.0.0.0:9000' "$PROXY_HAPROXY_CFG"
+  grep -q 'path_beg /sub/' "$PROXY_HAPROXY_CFG"
   grep -q 'deny_backend' "$PROXY_HAPROXY_CFG"
+  # Docs keep HTTP on :80 — we must NOT force redirect
+  ! grep -q 'redirect scheme https' "$PROXY_HAPROXY_CFG"
 }
 
-@test "_proxy_write_haproxy_node_cfg uses TCP and send-proxy" {
+@test "_proxy_write_haproxy_node_cfg uses TCP listen and send-proxy" {
   _proxy_write_haproxy_node_cfg "443" "reality.com" "127.0.0.1:12000" "127.0.0.1:11000"
+  grep -q 'listen front_node' "$PROXY_HAPROXY_CFG"
   grep -q 'mode tcp' "$PROXY_HAPROXY_CFG"
   grep -q 'reality.com' "$PROXY_HAPROXY_CFG"
   grep -q 'send-proxy' "$PROXY_HAPROXY_CFG"
   grep -q '127.0.0.1:12000' "$PROXY_HAPROXY_CFG"
+  grep -q 'tcp-request inspect-delay' "$PROXY_HAPROXY_CFG"
 }
 
 @test "proxy menu entries are wired in install.sh" {

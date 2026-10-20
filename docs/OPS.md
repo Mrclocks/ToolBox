@@ -47,8 +47,13 @@ Menu item **Show .env / path instructions** can re-apply the same writes.
 
 ## Reverse Proxy
 
-- **HAProxy panel** — HTTPS single-port, Host ACL, optional extra ports
-- **HAProxy node** — TCP/SNI + REALITY `send-proxy`
+Aligned with [PasarGuard single-port HAProxy](https://docs.pasarguard.org/en/learn/single-port/):
+
+- **HAProxy panel** — `listen front`, mode http, Host ACL, deny default,
+  PEM dir `/etc/haproxy/certs/`, binds 443(+extras) SSL + 80 plain (+ optional 9000 plain).
+  No forced HTTP→HTTPS redirect (docs keep :80 working).
+  After setup, panel `.env` is switched to local HTTP (`UVICORN_HOST`/`PORT`, SSL keys commented).
+- **HAProxy node** — `listen front_node`, TCP/SNI, REALITY `send-proxy`, fallback backend
 - **Caddy** — automatic HTTPS (own ACME)
 - **Nginx** — uses ToolBox/PasarGuard cert files
 - Status / Remove — stop services and restore prior configs when backed up

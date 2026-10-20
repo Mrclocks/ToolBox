@@ -140,19 +140,47 @@ _proxy_backup_file() {
 _proxy_print_panel_guide() {
   local backend_host="${1:-127.0.0.1}"
   local backend_port="${2:-8000}"
-  ui_box_start "Panel settings after reverse proxy"
-  ui_info "HAProxy/Nginx terminate TLS. Panel should listen on HTTP locally (no UVICORN_SSL_*)."
-  echo
-  printf '   # /opt/pasarguard/.env\n'
-  printf '   UVICORN_HOST = "%s"\n' "$backend_host"
-  printf '   UVICORN_PORT = %s\n' "$backend_port"
-  printf '   # Remove or comment out:\n'
-  printf '   # UVICORN_SSL_CERTFILE = ...\n'
-  printf '   # UVICORN_SSL_KEYFILE  = ...\n'
-  echo
-  ui_info "Panel UI → Settings → Panel: Host=${backend_host}  Port=${backend_port}"
-  ui_info "Then: cd /opt/pasarguard && docker compose restart"
+  ui_box_start "Panel settings (PasarGuard single-port docs)"
+  ui_info "HAProxy terminates TLS. Panel must listen on local HTTP only."
+  ui_kv "Panel Host" "$backend_host"
+  ui_kv "Panel Port" "$backend_port"
+  ui_info "Also set the same values in Panel UI → Settings → Panel"
+  ui_info "Host ports for users: 443 / 80 / extra ports (HAProxy listens on them)"
   ui_box_end
+}
+
+# Align panel .env with official single-port guide: local HTTP, no Uvicorn TLS.
+_proxy_prepare_panel_for_haproxy() {
+  local backend_host="${1:-127.0.0.1}"
+  local backend_port="${2:-8000}"
+  local envf="/opt/pasarguard/.env"
+  [[ -d /opt/pasarguard ]] || {
+    ui_warn "/opt/pasarguard not found — set Panel Host/Port in the UI manually"
+    return 0
+  }
+  if [[ ! -f "$envf" ]]; then
+    touch "$envf"
+    chmod 600 "$envf"
+  elif declare -F backup_file >/dev/null 2>&1; then
+    backup_file "$envf" || true
+  fi
+
+  if declare -F _ssl_env_comment_key >/dev/null 2>&1; then
+    _ssl_env_comment_key "$envf" "UVICORN_SSL_CERTFILE"
+    _ssl_env_comment_key "$envf" "UVICORN_SSL_KEYFILE"
+    _ssl_env_comment_key "$envf" "UVICORN_UDS"
+  fi
+  if declare -F _ssl_env_upsert >/dev/null 2>&1; then
+    _ssl_env_upsert "$envf" "UVICORN_HOST" "$backend_host" spaced
+    _ssl_env_upsert "$envf" "UVICORN_PORT" "$backend_port" bare
+  else
+    ui_warn "SSL helpers missing — edit ${envf} manually"
+    return 0
+  fi
+  ui_success "Panel .env prepared for HAProxy (local HTTP ${backend_host}:${backend_port}, SSL keys commented)"
+  if declare -F _ssl_restart_compose >/dev/null 2>&1; then
+    _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
+  fi
 }
 
 # --- HAProxy ---------------------------------------------------------------
@@ -198,20 +226,24 @@ _proxy_install_haproxy() {
 }
 
 _proxy_write_haproxy_panel_cfg() {
+  # Aligned with https://docs.pasarguard.org/en/learn/single-port/
+  # listen front · mode http · Host ACL · deny default · PEM dir crt
   local panel_domain="$1"
   local sub_domain="$2"
   local backend_host="$3"
   local backend_port="$4"
   local listen_https="$5"
   local listen_http="$6"
-  local extra_ports="$7"
+  local extra_ssl_ports="$7"
+  local extra_plain_ports="${8:-}"
   local p
 
   _proxy_backup_file "$PROXY_HAPROXY_CFG" "$PROXY_HAPROXY_CFG_BAK"
 
   cat >"$PROXY_HAPROXY_CFG" <<EOF
 # MrClock ToolBox — PasarGuard panel single-port (HTTP mode)
-# Managed file — regenerate from: mrclock → Reverse Proxy → HAProxy
+# Based on official docs: https://docs.pasarguard.org/en/learn/single-port/
+# Managed — regenerate from: mrclock → Reverse Proxy → HAProxy
 
 global
     maxconn 50000
@@ -230,18 +262,18 @@ defaults
     timeout server  50s
     maxconn 50000
 
-frontend http_redirect
-    bind :::${listen_http} v4v6
-    mode http
-    redirect scheme https code 301 if !{ ssl_fc }
-
-frontend front
+# Official pattern: one listen block, several binds (SSL + plain HTTP).
+# Port ${listen_http} stays plain HTTP (no forced redirect) so old HTTP
+# subscription links keep working — same as PasarGuard docs.
+listen front
     mode http
     option httplog
+    log /dev/log local0
     bind :::${listen_https} v4v6 ssl crt ${PROXY_HAPROXY_CERT_DIR}/
+    bind :::${listen_http} v4v6
 EOF
 
-  for p in $extra_ports; do
+  for p in $extra_ssl_ports; do
     [[ "$p" =~ ^[0-9]+$ ]] || continue
     (( p >= 1 && p <= 65535 )) || continue
     [[ "$p" == "$listen_https" || "$p" == "$listen_http" ]] && continue
@@ -250,7 +282,19 @@ EOF
 EOF
   done
 
+  for p in $extra_plain_ports; do
+    [[ "$p" =~ ^[0-9]+$ ]] || continue
+    (( p >= 1 && p <= 65535 )) || continue
+    [[ "$p" == "$listen_https" || "$p" == "$listen_http" ]] && continue
+    cat >>"$PROXY_HAPROXY_CFG" <<EOF
+    bind 0.0.0.0:${p}
+EOF
+  done
+
   cat >>"$PROXY_HAPROXY_CFG" <<EOF
+    capture request header X-Forwarded-For len 15
+    capture request header Host len 50
+    log-format "%ci:%cp [%tr] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r %U"
     acl host_panel hdr(host) -i ${panel_domain}
 EOF
   if [[ -n "$sub_domain" && "$sub_domain" != "$panel_domain" ]]; then
@@ -272,7 +316,7 @@ backend panel
     mode http
     option forwardfor
     http-request set-header X-Forwarded-Proto https if { ssl_fc }
-    server srv1 ${backend_host}:${backend_port} check
+    server srv1 ${backend_host}:${backend_port}
 
 backend sub
     mode http
@@ -280,7 +324,7 @@ backend sub
     http-request set-header X-Forwarded-Proto https if { ssl_fc }
     acl is_sub path_beg /sub/
     http-request deny if !is_sub
-    server srv1 ${backend_host}:${backend_port} check
+    server srv1 ${backend_host}:${backend_port}
 
 backend deny_backend
     mode http
@@ -289,6 +333,7 @@ EOF
 }
 
 _proxy_write_haproxy_node_cfg() {
+  # Aligned with official node TCP / REALITY example (send-proxy + inspect-delay)
   local listen_https="$1"
   local reality_sni="$2"
   local reality_backend="$3"
@@ -298,7 +343,8 @@ _proxy_write_haproxy_node_cfg() {
 
   cat >"$PROXY_HAPROXY_CFG" <<EOF
 # MrClock ToolBox — PasarGuard node single-port (TCP / SNI mode)
-# Managed file — regenerate from: mrclock → Reverse Proxy → HAProxy
+# Based on official docs: https://docs.pasarguard.org/en/learn/single-port/
+# Managed — regenerate from: mrclock → Reverse Proxy → HAProxy
 
 global
     maxconn 50000
@@ -316,9 +362,9 @@ defaults
     timeout server  1h
     maxconn 50000
 
-frontend front_node
+listen front_node
     mode tcp
-    bind :::${listen_https} v4v6
+    bind *:${listen_https}
     tcp-request inspect-delay 5s
     tcp-request content accept if { req_ssl_hello_type 1 }
 EOF
@@ -400,8 +446,10 @@ proxy_setup_haproxy() {
     ui_ask backend_host "Panel backend host" "127.0.0.1"
     ui_ask_port backend_port "Panel backend port" "8000"
     ui_ask_port listen_https "HTTPS listen port" "443"
-    ui_ask_port listen_http "HTTP listen port (redirect)" "80"
+    ui_ask_port listen_http "HTTP listen port (plain, per docs — no redirect)" "80"
     ui_ask extra_ports "Extra HTTPS ports (optional, space-separated)" "8443"
+    local extra_plain=""
+    ui_ask extra_plain "Extra plain HTTP ports (optional, e.g. 9000)" "9000"
 
     if ! ui_confirm "Install HAProxy for ${panel_domain}${sub_domain:+ + $sub_domain}?" "Y"; then
       ui_warn "Cancelled."
@@ -420,7 +468,7 @@ proxy_setup_haproxy() {
 
     _proxy_write_haproxy_panel_cfg \
       "$panel_domain" "$sub_domain" "$backend_host" "$backend_port" \
-      "$listen_https" "$listen_http" "$extra_ports"
+      "$listen_https" "$listen_http" "$extra_ports" "$extra_plain"
 
     PROXY_ENGINE=haproxy
     PROXY_MODE=panel
@@ -435,9 +483,12 @@ proxy_setup_haproxy() {
 
     if ! _proxy_haproxy_validate_and_start; then return 1; fi
 
-    ui_success "HAProxy panel mode ready on :${listen_https}"
+    ui_success "HAProxy panel mode ready (docs-aligned listen front)"
+    _proxy_prepare_panel_for_haproxy "$backend_host" "$backend_port"
     _proxy_print_panel_guide "$backend_host" "$backend_port"
-    ui_info "Open firewall if needed: ufw allow ${listen_https}/tcp && ufw allow ${listen_http}/tcp"
+    ui_info "Firewall tip: ufw allow ${listen_https}/tcp ; ufw allow ${listen_http}/tcp"
+    [[ -n "$extra_ports" ]] && ui_info "Also allow extra HTTPS: ${extra_ports}"
+    [[ -n "$extra_plain" ]] && ui_info "Also allow plain ports: ${extra_plain}"
     return 0
   fi
 
