@@ -95,8 +95,7 @@ pgrestore_menu_loop() {
   while true; do
     ui_clear
     ui_banner
-    printf '%sRestore & Migrate%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_title "Restore & Migrate"
     if _pgmg_wizard_installed; then
       printf '  %s    %sPGClockMG wizard detected%s\n' "$C_DIM" "$C_GREEN" "$C_RESET"
     else
@@ -108,19 +107,18 @@ pgrestore_menu_loop() {
     printf '  %s 3)%s Status\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 4)%s Uninstall\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 5)%s Redirect server (3x-ui / Hiddify)\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_back_line
     local choice
-    printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
+    printf '%sSelect%s [0-5]: ' "$C_ORANGE" "$C_RESET"
     ui_read choice
-    choice="$(trim "${choice:-0}")"
+    choice="$(trim "${choice:-}")"
     case "$choice" in
       1) ui_clear; pgrestore_install; ui_pause ;;
       2) ui_clear; pgrestore_open; ui_pause ;;
       3) ui_clear; pgrestore_status; ui_pause ;;
       4) ui_clear; pgrestore_uninstall; ui_pause ;;
       5) ui_clear; pgrestore_redirect; ui_pause ;;
-      0|b|B) return 0 ;;
+      0|b|B|back|Back) return 0 ;;
       *) ui_warn "Invalid selection."; sleep 1 ;;
     esac
   done

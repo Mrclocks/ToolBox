@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.7 — 2026-10-20
+
+### Changed
+- **Reverse Proxy is HAProxy-only** — Caddy and Nginx setup paths removed from
+  menus, module code, docs, and tests (soft conflict warning if they are active)
+- **Menus**: every submenu shows `0) Back`; `ui_menu` cancels with Back
+- **Input**: `ui_read` uses `/dev/tty` + readline (`-e`) + `stty sane` so
+  clear/retype works correctly after wipe / under sudo / curl|bash
+
 ## 0.3.6 — 2026-10-20
 
 ### Fixed

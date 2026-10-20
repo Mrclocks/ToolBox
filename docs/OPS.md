@@ -9,8 +9,6 @@ Short English reference for the categorized ToolBox menus.
 3. Set panel `.env` as printed (local HTTP behind the proxy)
 4. **Backup** / **Restore & Migrate** when you need PGClockMG
 
-Do **not** use Caddy auto-HTTPS and ToolBox SSL Issue on the same domain.
-
 ## SSL Certificates
 
 | Item | Path |
@@ -40,23 +38,22 @@ After **Issue / Setup**, ToolBox **automatically** writes paths into:
 
 Then it restarts the matching docker compose stack when possible.
 
-Behind HAProxy/Nginx later: remove `UVICORN_SSL_*` and listen on `127.0.0.1:8000`
+Behind HAProxy later: remove `UVICORN_SSL_*` and listen on `127.0.0.1:8000`
 (Reverse Proxy setup prints that guide).
 
 Menu item **Show .env / path instructions** can re-apply the same writes.
 
 ## Reverse Proxy
 
-Aligned with [PasarGuard single-port HAProxy](https://docs.pasarguard.org/en/learn/single-port/):
+HAProxy only — aligned with [PasarGuard single-port](https://docs.pasarguard.org/en/learn/single-port/):
 
-- **HAProxy panel** — `listen front`, mode http, Host ACL, deny default,
+- **Panel mode** — `listen front`, mode http, Host ACL, deny default,
   PEM dir `/etc/haproxy/certs/`, binds 443(+extras) SSL + 80 plain (+ optional 9000 plain).
   No forced HTTP→HTTPS redirect (docs keep :80 working).
   After setup, panel `.env` is switched to local HTTP (`UVICORN_HOST`/`PORT`, SSL keys commented).
-- **HAProxy node** — `listen front_node`, TCP/SNI, REALITY `send-proxy`, fallback backend
-- **Caddy** — automatic HTTPS (own ACME)
-- **Nginx** — uses ToolBox/PasarGuard cert files
-- Status / Remove — stop services and restore prior configs when backed up
+- **Node mode** — `listen front_node`, TCP/SNI, REALITY `send-proxy`, fallback backend
+- **Status / Remove** — stop HAProxy and restore prior config when backed up
+- Soft warning if another web server is already active on the host before setup
 
 ## Backup / Restore & Migrate
 

@@ -79,10 +79,11 @@ setup() {
   grep -q 'tcp-request inspect-delay' "$PROXY_HAPROXY_CFG"
 }
 
-@test "proxy menu entries are wired in install.sh" {
+@test "proxy menu is HAProxy-only (no Caddy/Nginx)" {
   grep -q 'Setup HAProxy' "${REPO_ROOT}/modules/proxy.sh"
-  grep -q 'Setup Caddy' "${REPO_ROOT}/modules/proxy.sh"
-  grep -q 'Setup Nginx' "${REPO_ROOT}/modules/proxy.sh"
   grep -q 'Status / Remove' "${REPO_ROOT}/modules/proxy.sh"
   grep -q '_proxy_warn_conflicts' "${REPO_ROOT}/modules/proxy.sh"
+  grep -q 'Reverse Proxy (HAProxy)' "${REPO_ROOT}/modules/proxy.sh"
+  ! grep -qE 'proxy_setup_caddy|proxy_setup_nginx|Setup Caddy|Setup Nginx' "${REPO_ROOT}/modules/proxy.sh"
+  ! grep -qE 'PROXY_CADDYFILE|PROXY_NGINX_SITE' "${REPO_ROOT}/modules/proxy.sh"
 }

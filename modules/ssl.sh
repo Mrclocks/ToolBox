@@ -709,7 +709,7 @@ _ssl_print_env_guide() {
       ui_info "In PasarGuard panel → Nodes, use the same paths if the UI asks."
       ;;
   esac
-  ui_info "Note: if you later put HAProxy/Caddy in front, switch panel to local HTTP (no UVICORN_SSL_*)."
+  ui_info "Note: if you later put HAProxy in front, switch panel to local HTTP (no UVICORN_SSL_*)."
   ui_info "Auto-renew is ON — files redeploy automatically; .env paths stay the same."
   ui_box_end
 }
@@ -737,26 +737,34 @@ ssl_issue_interactive() {
       ui_info "Using Node paths under ${SSL_NODE_CERT_DIR}"
       ;;
     both)
-      ui_menu choice "This server looks like Panel + Node. Apply certs to:" \
-        "Panel only" \
-        "Node only" \
-        "Both (recommended)"
+      if ! ui_menu choice "This server looks like Panel + Node. Apply certs to:" \
+          "Panel only" \
+          "Node only" \
+          "Both (recommended)"; then
+        ui_info "Back."
+        return 0
+      fi
       case "$choice" in
         1) role=panel ;;
         2) role=node ;;
         3) role=both ;;
+        *) return 0 ;;
       esac
       ;;
     none)
       ui_warn "PasarGuard Panel/Node not detected. Choose target paths:"
-      ui_menu choice "Install certificates for:" \
-        "Panel paths (/var/lib/pasarguard/certs)" \
-        "Node paths (/var/lib/pg-node/certs)" \
-        "Both"
+      if ! ui_menu choice "Install certificates for:" \
+          "Panel paths (/var/lib/pasarguard/certs)" \
+          "Node paths (/var/lib/pg-node/certs)" \
+          "Both"; then
+        ui_info "Back."
+        return 0
+      fi
       case "$choice" in
         1) role=panel ;;
         2) role=node ;;
         3) role=both ;;
+        *) return 0 ;;
       esac
       ;;
   esac
@@ -953,26 +961,24 @@ ssl_menu_loop() {
   while true; do
     ui_clear
     ui_banner
-    printf '%sSSL Certificates%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_title "SSL Certificates"
     printf '  %s 1)%s Issue / Setup (recommended)\n' "$C_GREEN" "$C_RESET"
     printf '  %s 2)%s Status\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 3)%s Renew now\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 4)%s Show .env / path instructions\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 5)%s Repair auto-renew\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_back_line
     local choice
-    printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
+    printf '%sSelect%s [0-5]: ' "$C_ORANGE" "$C_RESET"
     ui_read choice
-    choice="$(trim "${choice:-0}")"
+    choice="$(trim "${choice:-}")"
     case "$choice" in
       1) ui_clear; ssl_issue_interactive; ui_pause ;;
       2) ui_clear; ssl_status; ui_pause ;;
       3) ui_clear; ssl_renew_now; ui_pause ;;
       4) ui_clear; ssl_show_env_guide; ui_pause ;;
       5) ui_clear; ssl_repair_autorenew; ui_pause ;;
-      0|b|B) return 0 ;;
+      0|b|B|back|Back) return 0 ;;
       *) ui_warn "Invalid selection."; sleep 1 ;;
     esac
   done

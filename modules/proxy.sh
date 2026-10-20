@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Module: Reverse proxy — HAProxy (primary), Caddy, Nginx
-# Goal: simplest path to single-port / TLS termination for PasarGuard
+# Module: Reverse proxy — HAProxy only (PasarGuard single-port)
 # shellcheck shell=bash
 
 PROXY_STATE_DIR="${PROXY_STATE_DIR:-${SECUREBOX_STATE_DIR}/proxy}"
@@ -8,10 +7,6 @@ PROXY_CONFIG_FILE="${PROXY_CONFIG_FILE:-${PROXY_STATE_DIR}/config.env}"
 PROXY_HAPROXY_CERT_DIR="${PROXY_HAPROXY_CERT_DIR:-/etc/haproxy/certs}"
 PROXY_HAPROXY_CFG="${PROXY_HAPROXY_CFG:-/etc/haproxy/haproxy.cfg}"
 PROXY_HAPROXY_CFG_BAK="${PROXY_STATE_DIR}/haproxy.cfg.pre-mrclock"
-PROXY_CADDYFILE="${PROXY_CADDYFILE:-/etc/caddy/Caddyfile}"
-PROXY_CADDYFILE_BAK="${PROXY_STATE_DIR}/Caddyfile.pre-mrclock"
-PROXY_NGINX_SITE="${PROXY_NGINX_SITE:-/etc/nginx/sites-available/mrclock-pasarguard}"
-PROXY_NGINX_LINK="${PROXY_NGINX_LINK:-/etc/nginx/sites-enabled/mrclock-pasarguard}"
 
 # --- helpers ---------------------------------------------------------------
 
@@ -195,16 +190,11 @@ _proxy_port_in_use() {
 }
 
 _proxy_warn_conflicts() {
-  # Soft warnings before installing a new engine
-  local engine="$1"
   local other
-  for other in haproxy caddy nginx; do
-    [[ "$other" == "$engine" ]] && continue
+  for other in caddy nginx; do
     if systemctl is-active --quiet "$other" 2>/dev/null; then
-      ui_warn "${other} is currently active — two proxies on :443 will conflict"
-      if have_tty && ! ui_confirm "Stop ${other} before continuing?" "Y"; then
-        ui_warn "Continuing with ${other} still active — bind may fail"
-      else
+      ui_warn "${other} is active on this host — may conflict with HAProxy on :443"
+      if have_tty && ui_confirm "Stop ${other} before continuing?" "Y"; then
         systemctl stop "$other" >/dev/null 2>&1 || true
         ui_info "Stopped ${other}"
       fi
@@ -422,12 +412,16 @@ proxy_setup_haproxy() {
   local mode_choice mode panel_domain sub_domain backend_host backend_port
   local listen_https listen_http extra_ports reality_sni reality_backend fallback_backend
 
-  ui_menu mode_choice "HAProxy mode" \
-    "Panel — single-port HTTPS (recommended)" \
-    "Node — TCP SNI / REALITY"
+  if ! ui_menu mode_choice "HAProxy mode" \
+      "Panel — single-port HTTPS (recommended)" \
+      "Node — TCP SNI / REALITY"; then
+    ui_info "Back."
+    return 0
+  fi
   case "$mode_choice" in
     1) mode=panel ;;
     2) mode=node ;;
+    *) return 0 ;;
   esac
 
   if [[ "$mode" == "panel" ]]; then
@@ -456,13 +450,13 @@ proxy_setup_haproxy() {
       return 0
     fi
 
-    _proxy_warn_conflicts haproxy
+    _proxy_warn_conflicts
     if ! _proxy_install_haproxy; then return 1; fi
 
     local -a cert_domains=("$panel_domain")
     [[ -n "$sub_domain" ]] && cert_domains+=("$sub_domain")
     if ! _proxy_ensure_certs_for_domains "${cert_domains[@]}"; then
-      ui_info "Tip: Main menu → SSL Certificates → Issue / Setup (needed before HAProxy/Nginx)"
+      ui_info "Tip: Main menu → SSL Certificates → Issue / Setup first"
       return 1
     fi
 
@@ -503,7 +497,7 @@ proxy_setup_haproxy() {
     ui_warn "Cancelled."
     return 0
   fi
-  _proxy_warn_conflicts haproxy
+  _proxy_warn_conflicts
   if ! _proxy_install_haproxy; then return 1; fi
 
   _proxy_write_haproxy_node_cfg "$listen_https" "$reality_sni" "$reality_backend" "$fallback_backend"
@@ -527,197 +521,11 @@ proxy_setup_haproxy() {
   return 0
 }
 
-# --- Caddy -----------------------------------------------------------------
-
-_proxy_install_caddy() {
-  if have_cmd caddy; then
-    ui_info "Caddy already installed: $(caddy version 2>/dev/null | head -n1)"
-    return 0
-  fi
-  ui_info "Installing Caddy..."
-  if ! apt_install_safe caddy; then
-    ui_error "Failed to install caddy (apt). On older distros add the Caddy apt repo first."
-    return 1
-  fi
-  return 0
-}
-
-proxy_setup_caddy() {
-  ui_step "Setup Caddy"
-  if is_dry_run; then
-    ui_info "[dry-run] Would install Caddy with automatic HTTPS"
-    return 0
-  fi
-
-  ui_warn "Caddy manages its own HTTPS (ACME). Do not also run ToolBox SSL Issue for the same domain."
-  local domain backend_host backend_port
-  while true; do
-    ui_ask domain "Domain for panel" "${PROXY_PANEL_DOMAIN:-}"
-    domain="$(trim "${domain,,}")"
-    if _proxy_valid_domain "$domain"; then break; fi
-    ui_warn "Invalid domain."
-  done
-  ui_ask backend_host "Backend host" "127.0.0.1"
-  ui_ask_port backend_port "Backend port" "8000"
-
-  if ! ui_confirm "Install Caddy for https://${domain} → ${backend_host}:${backend_port}?" "Y"; then
-    ui_warn "Cancelled."
-    return 0
-  fi
-  _proxy_warn_conflicts caddy
-  if ! _proxy_install_caddy; then return 1; fi
-
-  _proxy_backup_file "$PROXY_CADDYFILE" "$PROXY_CADDYFILE_BAK"
-  mkdir -p "$(dirname "$PROXY_CADDYFILE")"
-  cat >"$PROXY_CADDYFILE" <<EOF
-# MrClock ToolBox — Caddy reverse proxy for PasarGuard
-${domain} {
-	reverse_proxy ${backend_host}:${backend_port}
-}
-EOF
-
-  if ! caddy validate --config "$PROXY_CADDYFILE" 2>/dev/null; then
-    # Older caddy uses different validate flags
-    ui_warn "caddy validate skipped or failed — starting anyway"
-  fi
-
-  systemctl enable caddy >/dev/null 2>&1 || true
-  if ! systemctl restart caddy; then
-    ui_error "Caddy failed to start — journalctl -u caddy -n 40"
-    return 1
-  fi
-
-  PROXY_ENGINE=caddy
-  PROXY_MODE=panel
-  PROXY_PANEL_DOMAIN="$domain"
-  PROXY_BACKEND_HOST="$backend_host"
-  PROXY_BACKEND_PORT="$backend_port"
-  _proxy_save_config
-
-  ui_success "Caddy active for https://${domain}"
-  _proxy_print_panel_guide "$backend_host" "$backend_port"
-  return 0
-}
-
-# --- Nginx -----------------------------------------------------------------
-
-_proxy_install_nginx() {
-  if have_cmd nginx; then
-    ui_info "Nginx already installed"
-    return 0
-  fi
-  ui_info "Installing Nginx..."
-  if ! apt_install_safe nginx; then
-    ui_error "Failed to install nginx"
-    return 1
-  fi
-  return 0
-}
-
-proxy_setup_nginx() {
-  ui_step "Setup Nginx"
-  if is_dry_run; then
-    ui_info "[dry-run] Would install Nginx reverse proxy"
-    return 0
-  fi
-
-  local domain backend_host backend_port cert key
-  while true; do
-    ui_ask domain "Panel domain" "${PROXY_PANEL_DOMAIN:-}"
-    domain="$(trim "${domain,,}")"
-    if _proxy_valid_domain "$domain"; then break; fi
-    ui_warn "Invalid domain."
-  done
-  ui_ask backend_host "Backend host" "127.0.0.1"
-  ui_ask_port backend_port "Backend port" "8000"
-
-  # Prefer PasarGuard / ToolBox SSL paths
-  cert="/var/lib/pasarguard/certs/${domain}.cer"
-  key="/var/lib/pasarguard/certs/${domain}.cer.key"
-  if [[ ! -f "$cert" || ! -f "$key" ]]; then
-    if [[ -f "${SECUREBOX_STATE_DIR}/ssl/live/fullchain.cer" ]]; then
-      cert="${SECUREBOX_STATE_DIR}/ssl/live/fullchain.cer"
-      key="${SECUREBOX_STATE_DIR}/ssl/live/key.pem"
-    elif [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]]; then
-      cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
-      key="/etc/letsencrypt/live/${domain}/privkey.pem"
-    else
-      ui_error "No certificate for ${domain}. Run SSL Certificates → Issue / Setup first."
-      return 1
-    fi
-  fi
-
-  if ! ui_confirm "Install Nginx for https://${domain} → ${backend_host}:${backend_port}?" "Y"; then
-    ui_warn "Cancelled."
-    return 0
-  fi
-  _proxy_warn_conflicts nginx
-  if ! _proxy_install_nginx; then return 1; fi
-
-  mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
-  cat >"$PROXY_NGINX_SITE" <<EOF
-# MrClock ToolBox — Nginx reverse proxy for PasarGuard
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${domain};
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${domain};
-
-    ssl_certificate     ${cert};
-    ssl_certificate_key ${key};
-
-    location / {
-        proxy_pass http://${backend_host}:${backend_port};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-EOF
-
-  ln -sfn "$PROXY_NGINX_SITE" "$PROXY_NGINX_LINK"
-  # Avoid default site stealing :80/:443 when present
-  if [[ -L /etc/nginx/sites-enabled/default ]]; then
-    rm -f /etc/nginx/sites-enabled/default
-    ui_info "Disabled nginx default site"
-  fi
-
-  if ! nginx -t; then
-    ui_error "nginx -t failed"
-    return 1
-  fi
-  systemctl enable nginx >/dev/null 2>&1 || true
-  if ! systemctl restart nginx; then
-    ui_error "Nginx failed to start"
-    return 1
-  fi
-
-  PROXY_ENGINE=nginx
-  PROXY_MODE=panel
-  PROXY_PANEL_DOMAIN="$domain"
-  PROXY_BACKEND_HOST="$backend_host"
-  PROXY_BACKEND_PORT="$backend_port"
-  _proxy_save_config
-
-  ui_success "Nginx active for https://${domain}"
-  _proxy_print_panel_guide "$backend_host" "$backend_port"
-  return 0
-}
 
 # --- Status / Remove -------------------------------------------------------
 
 proxy_status() {
-  ui_step "Reverse Proxy — Status"
+  ui_step "HAProxy — Status"
   _proxy_load_config
   ui_box_start "Saved configuration"
   ui_kv "Engine" "${PROXY_ENGINE:-(none)}"
@@ -729,16 +537,15 @@ proxy_status() {
   ui_kv "Config file" "$PROXY_CONFIG_FILE"
   ui_box_end
 
-  local svc
-  for svc in haproxy caddy nginx; do
-    if have_cmd "$svc" || systemctl list-unit-files "${svc}.service" 2>/dev/null | grep -q "${svc}"; then
-      if systemctl is-active --quiet "$svc" 2>/dev/null; then
-        ui_success "${svc}: active"
-      else
-        ui_info "${svc}: installed, not active"
-      fi
+  if have_cmd haproxy || systemctl list-unit-files haproxy.service 2>/dev/null | grep -q haproxy; then
+    if systemctl is-active --quiet haproxy 2>/dev/null; then
+      ui_success "haproxy: active"
+    else
+      ui_info "haproxy: installed, not active"
     fi
-  done
+  else
+    ui_info "haproxy: not installed"
+  fi
 
   if [[ -d "$PROXY_HAPROXY_CERT_DIR" ]]; then
     local n
@@ -748,70 +555,39 @@ proxy_status() {
 }
 
 proxy_remove() {
-  ui_step "Reverse Proxy — Remove"
+  ui_step "HAProxy — Remove"
   _proxy_load_config
-  local engine="${PROXY_ENGINE:-}"
-  if [[ -z "$engine" ]]; then
-    ui_warn "No ToolBox proxy config saved."
-    if ! ui_confirm "Stop common proxy services anyway (haproxy/caddy/nginx)?" "N"; then
-      return 0
-    fi
-  fi
-
-  if ! ui_confirm "Stop and disable ${engine:-proxy services}, restore backups if present?" "N"; then
+  if ! ui_confirm "Stop HAProxy and restore previous config if backed up?" "N"; then
     ui_warn "Cancelled."
     return 0
   fi
-
-  case "$engine" in
-    haproxy|"")
-      systemctl disable --now haproxy >/dev/null 2>&1 || true
-      if [[ -f "$PROXY_HAPROXY_CFG_BAK" ]]; then
-        cp -a "$PROXY_HAPROXY_CFG_BAK" "$PROXY_HAPROXY_CFG"
-        ui_info "Restored ${PROXY_HAPROXY_CFG}"
-      fi
-      ;;
-  esac
-  case "$engine" in
-    caddy|"")
-      systemctl disable --now caddy >/dev/null 2>&1 || true
-      if [[ -f "$PROXY_CADDYFILE_BAK" ]]; then
-        cp -a "$PROXY_CADDYFILE_BAK" "$PROXY_CADDYFILE"
-        ui_info "Restored ${PROXY_CADDYFILE}"
-      fi
-      ;;
-  esac
-  case "$engine" in
-    nginx|"")
-      systemctl disable --now nginx >/dev/null 2>&1 || true
-      rm -f "$PROXY_NGINX_LINK"
-      ;;
-  esac
-
+  systemctl disable --now haproxy >/dev/null 2>&1 || true
+  if [[ -f "$PROXY_HAPROXY_CFG_BAK" ]]; then
+    cp -a "$PROXY_HAPROXY_CFG_BAK" "$PROXY_HAPROXY_CFG"
+    ui_info "Restored ${PROXY_HAPROXY_CFG}"
+  fi
   if [[ -f "$PROXY_CONFIG_FILE" ]]; then
     mv -f "$PROXY_CONFIG_FILE" "${PROXY_CONFIG_FILE}.removed.$(date +%Y%m%d%H%M%S)"
   fi
-  ui_success "Proxy services stopped. Certificates were left in place."
+  ui_success "HAProxy stopped. Certificate PEM files were left in place."
 }
 
 proxy_status_remove_menu() {
   while true; do
     ui_clear
     ui_banner
-    printf '%sStatus / Remove%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_title "HAProxy — Status / Remove"
     printf '  %s 1)%s Status\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 2)%s Remove / Stop\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_back_line
     local choice
-    printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
+    printf '%sSelect%s [0-2]: ' "$C_ORANGE" "$C_RESET"
     ui_read choice
-    choice="$(trim "${choice:-0}")"
+    choice="$(trim "${choice:-}")"
     case "$choice" in
       1) ui_clear; proxy_status; ui_pause ;;
       2) ui_clear; proxy_remove; ui_pause ;;
-      0|b|B) return 0 ;;
+      0|b|B|back|Back) return 0 ;;
       *) ui_warn "Invalid selection."; sleep 1 ;;
     esac
   done
@@ -823,24 +599,18 @@ proxy_menu_loop() {
   while true; do
     ui_clear
     ui_banner
-    printf '%sReverse Proxy%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
-    ui_line 56 '-'
-    printf '  %s 1)%s Setup HAProxy (recommended)\n' "$C_GREEN" "$C_RESET"
-    printf '  %s 2)%s Setup Caddy\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 3)%s Setup Nginx\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 4)%s Status / Remove\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
-    ui_line 56 '-'
+    ui_menu_title "Reverse Proxy (HAProxy)"
+    printf '  %s 1)%s Setup HAProxy\n' "$C_GREEN" "$C_RESET"
+    printf '  %s 2)%s Status / Remove\n' "$C_ORANGE" "$C_RESET"
+    ui_menu_back_line
     local choice
-    printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
+    printf '%sSelect%s [0-2]: ' "$C_ORANGE" "$C_RESET"
     ui_read choice
-    choice="$(trim "${choice:-0}")"
+    choice="$(trim "${choice:-}")"
     case "$choice" in
       1) ui_clear; proxy_setup_haproxy; ui_pause ;;
-      2) ui_clear; proxy_setup_caddy; ui_pause ;;
-      3) ui_clear; proxy_setup_nginx; ui_pause ;;
-      4) proxy_status_remove_menu ;;
-      0|b|B) return 0 ;;
+      2) proxy_status_remove_menu ;;
+      0|b|B|back|Back) return 0 ;;
       *) ui_warn "Invalid selection."; sleep 1 ;;
     esac
   done
