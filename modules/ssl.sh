@@ -11,8 +11,12 @@ SSL_NODE_CERT_DIR="${SSL_NODE_CERT_DIR:-${SSL_NODE_ROOT}/certs}"
 SSL_STATE_DIR="${SSL_STATE_DIR:-${SECUREBOX_STATE_DIR}/ssl}"
 SSL_CONFIG_FILE="${SSL_CONFIG_FILE:-${SSL_STATE_DIR}/config.env}"
 SSL_DEPLOY_HOOK="${SSL_DEPLOY_HOOK:-${SSL_STATE_DIR}/deploy-hook.sh}"
+SSL_PRE_HOOK="${SSL_PRE_HOOK:-${SSL_STATE_DIR}/acme-pre-hook.sh}"
+SSL_POST_HOOK="${SSL_POST_HOOK:-${SSL_STATE_DIR}/acme-post-hook.sh}"
+SSL_ACME_STOPPED="${SSL_ACME_STOPPED:-${SSL_STATE_DIR}/.acme-stopped-services}"
 SSL_ACME_HOME="${SSL_ACME_HOME:-/root/.acme.sh}"
 SSL_ACME_BIN="${SSL_ACME_BIN:-${SSL_ACME_HOME}/acme.sh}"
+PROXY_CONFIG_FILE="${PROXY_CONFIG_FILE:-${SECUREBOX_STATE_DIR}/proxy/config.env}"
 
 # --- detection / parsing ---------------------------------------------------
 
@@ -172,19 +176,26 @@ _ssl_preflight_issue() {
   done
   if _ssl_port80_busy; then
     owner="$(_ssl_port80_owner)"
-    ui_warn "Port 80 is in use (likely: ${owner}). ACME HTTP-01 needs :80 free."
-    ui_info "Fix: temporarily stop that service, or finish Reverse Proxy setup after SSL."
-    if have_tty; then
-      if ! ui_confirm "Continue anyway?" "N"; then
-        ui_box_end
-        ui_error "Aborted — free port 80, then retry Issue / Setup."
-        return 1
-      fi
-    else
-      ui_box_end
-      ui_error "Port 80 busy and no TTY to confirm. Aborting."
-      return 1
-    fi
+    case "$owner" in
+      haproxy|nginx|caddy|apache2|httpd)
+        ui_info "Port 80 held by ${owner} — ACME pre-hook will stop it briefly, then restore."
+        ;;
+      *)
+        ui_warn "Port 80 is in use (likely: ${owner}). ACME HTTP-01 needs :80 free."
+        ui_info "ACME pre-hook will try to free known reverse proxies; other owners may still fail."
+        if have_tty; then
+          if ! ui_confirm "Continue anyway?" "N"; then
+            ui_box_end
+            ui_error "Aborted — free port 80, then retry Issue / Setup."
+            return 1
+          fi
+        else
+          ui_box_end
+          ui_error "Port 80 busy and no TTY to confirm. Aborting."
+          return 1
+        fi
+        ;;
+    esac
   else
     ui_success "Port 80 is free"
   fi
@@ -404,6 +415,90 @@ HOOK
   chmod 700 "$SSL_DEPLOY_HOOK"
 }
 
+# Temporarily free :80 for ACME HTTP-01 (esp. when HAProxy owns it).
+_ssl_write_acme_port_hooks() {
+  mkdir -p "$SSL_STATE_DIR"
+  cat >"$SSL_PRE_HOOK" <<'HOOK'
+#!/usr/bin/env bash
+# Stop reverse proxies that hold :80 so acme.sh --standalone can bind.
+set -euo pipefail
+STATE_DIR="${SECUREBOX_SSL_STATE_DIR:-/var/lib/securebox/ssl}"
+STOPPED="${STATE_DIR}/.acme-stopped-services"
+mkdir -p "$STATE_DIR"
+: >"$STOPPED"
+for svc in haproxy nginx caddy apache2 httpd; do
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$svc" 2>/dev/null; then
+    if systemctl stop "$svc" >/dev/null 2>&1; then
+      echo "$svc" >>"$STOPPED"
+      echo "[acme-pre] stopped ${svc}" >&2
+    fi
+  fi
+done
+# Brief wait for sockets to release
+sleep 1
+HOOK
+  cat >"$SSL_POST_HOOK" <<'HOOK'
+#!/usr/bin/env bash
+# Restart services stopped by acme-pre-hook.
+set -euo pipefail
+STATE_DIR="${SECUREBOX_SSL_STATE_DIR:-/var/lib/securebox/ssl}"
+STOPPED="${STATE_DIR}/.acme-stopped-services"
+[[ -f "$STOPPED" ]] || exit 0
+while IFS= read -r svc || [[ -n "$svc" ]]; do
+  [[ -n "$svc" ]] || continue
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl start "$svc" >/dev/null 2>&1 || true
+    echo "[acme-post] started ${svc}" >&2
+  fi
+done <"$STOPPED"
+rm -f "$STOPPED"
+HOOK
+  chmod 700 "$SSL_PRE_HOOK" "$SSL_POST_HOOK"
+}
+
+_ssl_panel_behind_haproxy() {
+  # True when ToolBox HAProxy panel mode is configured (TLS terminated at proxy).
+  local engine="" mode=""
+  if [[ -f "$PROXY_CONFIG_FILE" ]]; then
+    engine="$(grep -E '^PROXY_ENGINE=' "$PROXY_CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    mode="$(grep -E '^PROXY_MODE=' "$PROXY_CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    if [[ "$engine" == "haproxy" && "$mode" == "panel" ]]; then
+      return 0
+    fi
+  fi
+  if have_cmd systemctl && systemctl is-active --quiet haproxy 2>/dev/null; then
+    if [[ -f /opt/pasarguard/.env ]] \
+        && grep -qE '^[[:space:]]*#.*UVICORN_SSL_CERTFILE' /opt/pasarguard/.env 2>/dev/null; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Persist pre/post hooks into acme.sh domain conf so cron renew frees :80.
+_ssl_register_acme_port_hooks() {
+  local primary="${1:-}"
+  [[ -n "$primary" ]] || return 1
+  _ssl_write_acme_port_hooks
+  local conf tmp found=0
+  local -a confs=(
+    "${SSL_ACME_HOME}/${primary}_ecc/${primary}.conf"
+    "${SSL_ACME_HOME}/${primary}/${primary}.conf"
+  )
+  for conf in "${confs[@]}"; do
+    [[ -f "$conf" ]] || continue
+    found=1
+    tmp="$(mktemp)"
+    # Drop prior hook lines, then append ours (single-quoted paths; no spaces to escape)
+    grep -vE '^Le_PreHook=|^Le_PostHook=' "$conf" >"$tmp" 2>/dev/null || true
+    printf "Le_PreHook='%s'\n" "$SSL_PRE_HOOK" >>"$tmp"
+    printf "Le_PostHook='%s'\n" "$SSL_POST_HOOK" >>"$tmp"
+    cat "$tmp" >"$conf"
+    rm -f "$tmp"
+  done
+  (( found == 1 ))
+}
+
 _ssl_save_config() {
   local role="$1"
   local primary="$2"
@@ -425,6 +520,7 @@ SSL_EMAIL=${SSL_EMAIL:-}
 EOF
   chmod 600 "$SSL_CONFIG_FILE"
   _ssl_write_deploy_hook
+  _ssl_write_acme_port_hooks
 }
 
 _ssl_load_config() {
@@ -460,13 +556,23 @@ _ssl_issue_cert() {
     return 1
   fi
 
+  _ssl_write_acme_port_hooks
   ui_info "Requesting certificate for: ${domains[*]}"
-  if ! "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
-      --keylength ec-256; then
+  # pre/post hooks free :80 (HAProxy/etc) so HTTP-01 works now and on cron renew
+  if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+      "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
+      --keylength ec-256 \
+      --pre-hook "$SSL_PRE_HOOK" \
+      --post-hook "$SSL_POST_HOOK" \
+      --reloadcmd "$SSL_DEPLOY_HOOK"; then
     # Retry RSA if ECC fails on older stacks
     ui_warn "ECC issue failed — retrying with RSA 2048"
-    if ! "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
-        --keylength 2048; then
+    if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+        "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
+        --keylength 2048 \
+        --pre-hook "$SSL_PRE_HOOK" \
+        --post-hook "$SSL_POST_HOOK" \
+        --reloadcmd "$SSL_DEPLOY_HOOK"; then
       ui_error "Certificate issuance failed. Check DNS A/AAAA records point here and port 80 is free."
       return 1
     fi
@@ -498,6 +604,7 @@ _ssl_issue_cert() {
   if [[ -x "$SSL_ACME_BIN" ]]; then
     "$SSL_ACME_BIN" --install-cronjob >/dev/null 2>&1 || true
   fi
+  _ssl_register_acme_port_hooks "$primary" || true
   return 0
 }
 
@@ -588,6 +695,7 @@ _ssl_restart_compose() {
 
 _ssl_apply_env_paths() {
   # Write certificate paths into Panel/Node env (and node compose) automatically.
+  # When HAProxy panel mode is active, keep UVICORN_SSL_* commented (local HTTP).
   local role="$1"
   local primary="$2"
   local panel_env="/opt/pasarguard/.env"
@@ -610,16 +718,28 @@ _ssl_apply_env_paths() {
           touch "$panel_env"
           chmod 600 "$panel_env"
         fi
-        _ssl_env_upsert "$panel_env" "UVICORN_SSL_CERTFILE" "$cert_path" spaced
-        _ssl_env_upsert "$panel_env" "UVICORN_SSL_KEYFILE" "$key_path" spaced
-        # Direct TLS mode — UDS is for reverse-proxy setups
-        _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
-        ui_success "Panel .env updated: ${panel_env}"
-        ui_kv "UVICORN_SSL_CERTFILE" "$cert_path"
-        ui_kv "UVICORN_SSL_KEYFILE" "$key_path"
-        ui_info "UVICORN_PORT left unchanged (change it yourself if you want 443)"
-        _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
-        applied=1
+        if _ssl_panel_behind_haproxy; then
+          # TLS is terminated at HAProxy — do NOT re-enable Uvicorn direct TLS
+          _ssl_env_comment_key "$panel_env" "UVICORN_SSL_CERTFILE"
+          _ssl_env_comment_key "$panel_env" "UVICORN_SSL_KEYFILE"
+          _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
+          ui_success "Panel behind HAProxy — left UVICORN_SSL_* commented (local HTTP)"
+          ui_kv "Cert on disk" "$cert_path"
+          ui_kv "Key on disk" "$key_path"
+          ui_info "HAProxy PEM refreshed by deploy hook under /etc/haproxy/certs/"
+          applied=1
+        else
+          _ssl_env_upsert "$panel_env" "UVICORN_SSL_CERTFILE" "$cert_path" spaced
+          _ssl_env_upsert "$panel_env" "UVICORN_SSL_KEYFILE" "$key_path" spaced
+          # Direct TLS mode — UDS is for reverse-proxy setups
+          _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
+          ui_success "Panel .env updated: ${panel_env}"
+          ui_kv "UVICORN_SSL_CERTFILE" "$cert_path"
+          ui_kv "UVICORN_SSL_KEYFILE" "$key_path"
+          ui_info "UVICORN_PORT left unchanged (change it yourself if you want 443)"
+          _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
+          applied=1
+        fi
       else
         ui_warn "Panel dir /opt/pasarguard not found — skipped .env auto-update"
       fi
@@ -709,8 +829,12 @@ _ssl_print_env_guide() {
       ui_info "In PasarGuard panel → Nodes, use the same paths if the UI asks."
       ;;
   esac
-  ui_info "Note: if you later put HAProxy in front, switch panel to local HTTP (no UVICORN_SSL_*)."
-  ui_info "Auto-renew is ON — files redeploy automatically; .env paths stay the same."
+  if _ssl_panel_behind_haproxy; then
+    ui_info "HAProxy panel mode active — panel stays on local HTTP; certs feed /etc/haproxy/certs/."
+  else
+    ui_info "Note: if you later put HAProxy in front, switch panel to local HTTP (no UVICORN_SSL_*)."
+  fi
+  ui_info "Auto-renew is ON — files redeploy automatically; .env TLS mode is preserved."
   ui_box_end
 }
 
@@ -883,15 +1007,22 @@ ssl_renew_now() {
     return 1
   fi
   _ssl_write_deploy_hook
+  _ssl_write_acme_port_hooks
   ui_info "Forcing renew for ${SSL_PRIMARY}..."
-  if "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force --ecc 2>/dev/null \
-     || "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force; then
+  # Pass pre/post hooks so HAProxy (or peers) release :80 for HTTP-01
+  if SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force --ecc \
+       --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK" 2>/dev/null \
+     || SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force \
+       --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK"; then
     SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" bash "$SSL_DEPLOY_HOOK" || true
     ui_success "Renew + deploy completed"
     local -a doms=()
     # shellcheck disable=SC2206
     doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
-    _ssl_apply_env_paths "${SSL_ROLE:-panel}" "$SSL_PRIMARY"
+    # Do NOT rewrite .env here — paths are unchanged; rewriting UVICORN_SSL_*
+    # would undo HAProxy local-HTTP prep. Deploy hook already refreshed files/PEMs.
     _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
     return 0
   fi
@@ -910,7 +1041,11 @@ ssl_show_env_guide() {
   local -a doms=()
   # shellcheck disable=SC2206
   doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
-  if ui_confirm "Re-apply certificate paths into Panel/Node .env now?" "Y"; then
+  if _ssl_panel_behind_haproxy; then
+    ui_info "HAProxy panel mode detected — re-apply keeps UVICORN_SSL_* commented."
+  fi
+  # Default N: avoid accidentally flipping panel back to direct TLS
+  if ui_confirm "Re-apply certificate paths into Panel/Node .env now?" "N"; then
     _ssl_apply_env_paths "${SSL_ROLE:-panel}" "$SSL_PRIMARY"
   fi
   _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
@@ -933,6 +1068,7 @@ ssl_repair_autorenew() {
     fi
   fi
   _ssl_write_deploy_hook
+  _ssl_write_acme_port_hooks
   local fullchain="${SSL_STATE_DIR}/live/fullchain.cer"
   local keyfile="${SSL_STATE_DIR}/live/key.pem"
   mkdir -p "${SSL_STATE_DIR}/live"
@@ -945,6 +1081,11 @@ ssl_repair_autorenew() {
         --reloadcmd "$SSL_DEPLOY_HOOK" || true
     fi
   fi
+  if _ssl_register_acme_port_hooks "$SSL_PRIMARY"; then
+    ui_success "ACME pre/post hooks registered (free :80 during HTTP-01 renew)"
+  else
+    ui_warn "Could not patch acme.sh domain conf yet — run Renew once after Issue"
+  fi
   "$SSL_ACME_BIN" --install-cronjob >/dev/null 2>&1 || true
   if crontab -l 2>/dev/null | grep -q 'acme.sh'; then
     ui_success "Auto-renew cron repaired"
@@ -953,6 +1094,9 @@ ssl_repair_autorenew() {
   fi
   if [[ -x "$SSL_DEPLOY_HOOK" ]]; then
     ui_success "Deploy hook OK: ${SSL_DEPLOY_HOOK}"
+  fi
+  if [[ -x "$SSL_PRE_HOOK" && -x "$SSL_POST_HOOK" ]]; then
+    ui_success "ACME port-80 hooks OK (stop/start HAProxy during HTTP-01)"
   fi
   return 0
 }

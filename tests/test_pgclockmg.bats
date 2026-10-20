@@ -51,6 +51,20 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "PGClockMG installer is pinned with SHA-256" {
+  [[ "$PGCLOCKMG_INSTALL_URL" == *"/v"* ]]
+  [[ -n "$PGCLOCKMG_INSTALL_SHA256" ]]
+  [[ "$PGCLOCKMG_INSTALL_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]
+  grep -q 'PGCLOCKMG_INSTALL_SHA256' "${REPO_ROOT}/lib/pgclockmg.sh"
+  grep -q 'SHA-256 mismatch' "${REPO_ROOT}/lib/pgclockmg.sh"
+}
+
+@test "wizard access does not embed token in URL" {
+  ! grep -qE '\?token=\$\{token\}' "${REPO_ROOT}/lib/pgclockmg.sh"
+  grep -q 'Local URL' "${REPO_ROOT}/lib/pgclockmg.sh"
+  grep -q 'ssh -L' "${REPO_ROOT}/lib/pgclockmg.sh"
+}
+
 @test "backup and restore menus expose Install Open Status Uninstall" {
   grep -q 'Install / Update PGClockBackup' "${REPO_ROOT}/modules/pgbackup.sh"
   grep -q 'Open / Show access URL' "${REPO_ROOT}/modules/pgbackup.sh"

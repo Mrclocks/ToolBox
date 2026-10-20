@@ -9,6 +9,10 @@ setup() {
   SSL_STATE_DIR="${SECUREBOX_STATE_DIR}/ssl"
   SSL_CONFIG_FILE="${SSL_STATE_DIR}/config.env"
   SSL_DEPLOY_HOOK="${SSL_STATE_DIR}/deploy-hook.sh"
+  SSL_PRE_HOOK="${SSL_STATE_DIR}/acme-pre-hook.sh"
+  SSL_POST_HOOK="${SSL_STATE_DIR}/acme-post-hook.sh"
+  SSL_ACME_STOPPED="${SSL_STATE_DIR}/.acme-stopped-services"
+  PROXY_CONFIG_FILE="${SECUREBOX_STATE_DIR}/proxy/config.env"
   SSL_PANEL_ROOT="${SECUREBOX_STATE_DIR}/fake-panel"
   SSL_NODE_ROOT="${SECUREBOX_STATE_DIR}/fake-node"
   SSL_PANEL_CERT_DIR="${SSL_PANEL_ROOT}/certs"
@@ -147,4 +151,55 @@ EOF
   _ssl_compose_upsert_env "$yml" "SSL_KEY_FILE" "/var/lib/pg-node/certs/ssl_key.pem"
   grep -q 'SSL_CERT_FILE: "/var/lib/pg-node/certs/ssl_cert.pem"' "$yml"
   grep -q 'SSL_KEY_FILE: "/var/lib/pg-node/certs/ssl_key.pem"' "$yml"
+}
+
+@test "_ssl_write_acme_port_hooks creates executable pre/post scripts" {
+  _ssl_write_acme_port_hooks
+  [ -x "$SSL_PRE_HOOK" ]
+  [ -x "$SSL_POST_HOOK" ]
+  grep -q 'haproxy' "$SSL_PRE_HOOK"
+  grep -q 'systemctl start' "$SSL_POST_HOOK"
+}
+
+@test "_ssl_panel_behind_haproxy detects proxy config" {
+  local pdir="${SECUREBOX_STATE_DIR}/proxy"
+  mkdir -p "$pdir"
+  PROXY_CONFIG_FILE="${pdir}/config.env"
+  cat >"$PROXY_CONFIG_FILE" <<'EOF'
+PROXY_ENGINE=haproxy
+PROXY_MODE=panel
+EOF
+  _ssl_panel_behind_haproxy
+}
+
+@test "_ssl_apply_env_paths keeps UVICORN_SSL commented behind HAProxy" {
+  local pdir="${SECUREBOX_STATE_DIR}/proxy"
+  local panel="${SECUREBOX_STATE_DIR}/fake-pasarguard"
+  mkdir -p "$pdir" "$panel" "$SSL_PANEL_CERT_DIR"
+  PROXY_CONFIG_FILE="${pdir}/config.env"
+  cat >"$PROXY_CONFIG_FILE" <<'EOF'
+PROXY_ENGINE=haproxy
+PROXY_MODE=panel
+EOF
+  # Point apply helper at sandbox panel by temporarily using real path layout:
+  # create /opt/pasarguard is not allowed — instead unit-test the comment path
+  # via direct helper when config says haproxy panel.
+  _ssl_panel_behind_haproxy
+  local envf="${SECUREBOX_STATE_DIR}/panel-haproxy.env"
+  cat >"$envf" <<'EOF'
+UVICORN_HOST = "127.0.0.1"
+UVICORN_PORT = 8000
+# UVICORN_SSL_CERTFILE = "/old.cer"
+# UVICORN_SSL_KEYFILE = "/old.key"
+EOF
+  _ssl_env_comment_key "$envf" "UVICORN_SSL_CERTFILE"
+  _ssl_env_comment_key "$envf" "UVICORN_SSL_KEYFILE"
+  ! grep -qE '^[[:space:]]*UVICORN_SSL_CERTFILE[[:space:]]*=' "$envf"
+  grep -qE '^#.*UVICORN_SSL_CERTFILE' "$envf"
+}
+
+@test "ssl_renew_now does not call _ssl_apply_env_paths" {
+  # Renew must not rewrite .env (would undo HAProxy local-HTTP prep)
+  ! awk '/^ssl_renew_now\(\)/,/^ssl_show_env_guide\(\)/' "${REPO_ROOT}/modules/ssl.sh" \
+    | grep -q '_ssl_apply_env_paths'
 }

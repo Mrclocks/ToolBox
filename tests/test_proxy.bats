@@ -87,3 +87,13 @@ setup() {
   ! grep -qE 'proxy_setup_caddy|proxy_setup_nginx|Setup Caddy|Setup Nginx' "${REPO_ROOT}/modules/proxy.sh"
   ! grep -qE 'PROXY_CADDYFILE|PROXY_NGINX_SITE' "${REPO_ROOT}/modules/proxy.sh"
 }
+
+@test "_proxy_valid_host and hostport reject junk" {
+  _proxy_valid_host "127.0.0.1"
+  _proxy_valid_host "localhost"
+  ! _proxy_valid_host "bad host"
+  ! _proxy_valid_host '$(reboot)'
+  _proxy_valid_hostport "127.0.0.1:12000"
+  ! _proxy_valid_hostport "127.0.0.1"
+  ! _proxy_valid_hostport "host:99999"
+}

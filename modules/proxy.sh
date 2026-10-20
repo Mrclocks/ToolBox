@@ -59,6 +59,25 @@ _proxy_valid_domain() {
   [[ "$d" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]
 }
 
+_proxy_valid_host() {
+  # IPv4, localhost, or simple hostname/FQDN (no spaces / shell metacharacters)
+  local h="$1"
+  [[ -n "$h" ]] || return 1
+  if declare -F is_ipv4 >/dev/null 2>&1 && is_ipv4 "$h"; then
+    return 0
+  fi
+  [[ "$h" == "localhost" || "$h" == "::1" ]] && return 0
+  [[ "$h" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]
+}
+
+_proxy_valid_hostport() {
+  local hp="$1" host port
+  [[ "$hp" == *:* ]] || return 1
+  host="${hp%:*}"
+  port="${hp##*:}"
+  _proxy_valid_host "$host" && is_port "$port"
+}
+
 _proxy_find_ssl_pems() {
   # Populate PROXY_PEM_LIST with existing combined PEMs or build from SSL module / LE
   PROXY_PEM_LIST=()
@@ -437,7 +456,12 @@ proxy_setup_haproxy() {
       ui_warn "Ignoring invalid sub domain."
       sub_domain=""
     fi
-    ui_ask backend_host "Panel backend host" "127.0.0.1"
+    while true; do
+      ui_ask backend_host "Panel backend host" "127.0.0.1"
+      backend_host="$(trim "$backend_host")"
+      if _proxy_valid_host "$backend_host"; then break; fi
+      ui_warn "Invalid host (use IPv4, localhost, or hostname)."
+    done
     ui_ask_port backend_port "Panel backend port" "8000"
     ui_ask_port listen_https "HTTPS listen port" "443"
     ui_ask_port listen_http "HTTP listen port (plain, per docs — no redirect)" "80"
@@ -490,8 +514,22 @@ proxy_setup_haproxy() {
   ui_ask_port listen_https "Listen port" "443"
   ui_ask reality_sni "REALITY SNI suffix to match (e.g. reality.com)" ""
   reality_sni="$(trim "${reality_sni,,}")"
-  ui_ask reality_backend "REALITY backend host:port" "127.0.0.1:12000"
-  ui_ask fallback_backend "Fallback / TLS backend host:port" "127.0.0.1:11000"
+  if [[ -n "$reality_sni" ]] && ! _proxy_valid_domain "$reality_sni"; then
+    ui_warn "Ignoring invalid REALITY SNI."
+    reality_sni=""
+  fi
+  while true; do
+    ui_ask reality_backend "REALITY backend host:port" "127.0.0.1:12000"
+    reality_backend="$(trim "$reality_backend")"
+    if _proxy_valid_hostport "$reality_backend"; then break; fi
+    ui_warn "Invalid host:port."
+  done
+  while true; do
+    ui_ask fallback_backend "Fallback / TLS backend host:port" "127.0.0.1:11000"
+    fallback_backend="$(trim "$fallback_backend")"
+    if _proxy_valid_hostport "$fallback_backend"; then break; fi
+    ui_warn "Invalid host:port."
+  done
 
   if ! ui_confirm "Install HAProxy node TCP mode on :${listen_https}?" "Y"; then
     ui_warn "Cancelled."

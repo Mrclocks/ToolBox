@@ -28,7 +28,8 @@ Menu:
 4. Show `.env` / path instructions
 5. Repair auto-renew — reinstall cron + deploy hook
 
-Preflight checks DNS (soft) and that port **80** is free for ACME HTTP-01.
+Preflight checks DNS (soft) and port **80**. If HAProxy/nginx/caddy hold `:80`,
+ACME **pre/post hooks** stop them briefly for HTTP-01 (including cron renew), then restore.
 
 After **Issue / Setup**, ToolBox **automatically** writes paths into:
 
@@ -39,9 +40,11 @@ After **Issue / Setup**, ToolBox **automatically** writes paths into:
 Then it restarts the matching docker compose stack when possible.
 
 Behind HAProxy later: remove `UVICORN_SSL_*` and listen on `127.0.0.1:8000`
-(Reverse Proxy setup prints that guide).
+(Reverse Proxy setup does this automatically). Renew does **not** re-enable
+Uvicorn TLS; Show `.env` defaults to skip re-apply and respects HAProxy mode.
 
-Menu item **Show .env / path instructions** can re-apply the same writes.
+Menu item **Show .env / path instructions** can optionally re-apply (keeps
+local HTTP when HAProxy panel mode is detected).
 
 ## Reverse Proxy
 
@@ -64,5 +67,6 @@ Bridges to [PGClockMG](https://github.com/Mrclocks/PGClockMG) with ToolBox UI:
 | Backup | PGClockBackup (`/opt/pg-backup`, port 7001) |
 | Restore & Migrate | Wizard (`/opt/pg-migrator`, port 7000) |
 
-Install downloads the upstream `install.sh` and runs
-`PG_MIGRATOR_ACTION=install-backup|install-wizard` with your chosen port.
+Install downloads a **pinned release** of the upstream `install.sh` (SHA-256
+verified) and runs `PG_MIGRATOR_ACTION=install-backup|install-wizard` with your
+chosen port. Prefer SSH tunnel / UFW-restrict access; tokens are not put in URLs.

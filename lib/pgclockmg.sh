@@ -2,7 +2,10 @@
 # Shared bridge helpers for PGClockMG / PGClockBackup
 # shellcheck shell=bash
 
-PGCLOCKMG_INSTALL_URL="${PGCLOCKMG_INSTALL_URL:-https://raw.githubusercontent.com/Mrclocks/PGClockMG/main/install.sh}"
+# Pin to a release tag + SHA-256 — override only for intentional upgrades.
+PGCLOCKMG_INSTALL_REF="${PGCLOCKMG_INSTALL_REF:-v4.9.4}"
+PGCLOCKMG_INSTALL_URL="${PGCLOCKMG_INSTALL_URL:-https://raw.githubusercontent.com/Mrclocks/PGClockMG/${PGCLOCKMG_INSTALL_REF}/install.sh}"
+PGCLOCKMG_INSTALL_SHA256="${PGCLOCKMG_INSTALL_SHA256:-d80ddecafe2c02813f0485b76c65a2a13ac612dc46e49a2fdb17ccc710dda752}"
 PGCLOCKMG_REPO_URL="${PGCLOCKMG_REPO_URL:-https://github.com/Mrclocks/PGClockMG}"
 PG_WIZARD_DIR="${PG_WIZARD_DIR:-/opt/pg-migrator}"
 PG_BACKUP_DIR="${PG_BACKUP_DIR:-/opt/pg-backup}"
@@ -64,15 +67,46 @@ _pgmg_read_file_token() {
   head -n1 "$f" | tr -d '[:space:]'
 }
 
+_pgmg_sha256_file() {
+  local f="$1"
+  if have_cmd sha256sum; then
+    sha256sum "$f" | awk '{print $1}'
+  elif have_cmd shasum; then
+    shasum -a 256 "$f" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
 _pgmg_download_installer() {
-  # Prints path to downloaded install.sh
-  local dest
+  # Prints path to downloaded install.sh after integrity check
+  local dest got
   dest="$(mktemp /tmp/pgclockmg-install.XXXXXX.sh)"
+  ui_info "Downloading PGClockMG installer (${PGCLOCKMG_INSTALL_REF})..."
   if ! curl -fsSL --connect-timeout 20 --retry 2 "$PGCLOCKMG_INSTALL_URL" -o "$dest"; then
     rm -f "$dest"
     ui_error "Failed to download PGClockMG installer"
     ui_info "URL: ${PGCLOCKMG_INSTALL_URL}"
     return 1
+  fi
+  if [[ -n "${PGCLOCKMG_INSTALL_SHA256:-}" ]]; then
+    got="$(_pgmg_sha256_file "$dest" || true)"
+    if [[ -z "$got" ]]; then
+      rm -f "$dest"
+      ui_error "Cannot verify installer — sha256sum/shasum missing"
+      return 1
+    fi
+    if [[ "${got,,}" != "${PGCLOCKMG_INSTALL_SHA256,,}" ]]; then
+      rm -f "$dest"
+      ui_error "PGClockMG installer SHA-256 mismatch — refusing to run"
+      ui_kv "Expected" "$PGCLOCKMG_INSTALL_SHA256"
+      ui_kv "Got" "$got"
+      ui_info "Update PGCLOCKMG_INSTALL_REF / PGCLOCKMG_INSTALL_SHA256 together when upgrading."
+      return 1
+    fi
+    ui_success "Installer integrity OK (SHA-256 matched ${PGCLOCKMG_INSTALL_REF})"
+  else
+    ui_warn "PGCLOCKMG_INSTALL_SHA256 unset — running without integrity check"
   fi
   chmod 700 "$dest"
   printf '%s\n' "$dest"
@@ -87,7 +121,7 @@ _pgmg_run_installer() {
   local rc=0
 
   if is_dry_run; then
-    ui_info "[dry-run] Would run PGClockMG action=${action} port=${port:-default}"
+    ui_info "[dry-run] Would run PGClockMG action=${action} port=${port:-default} ref=${PGCLOCKMG_INSTALL_REF}"
     return 0
   fi
 
@@ -169,8 +203,15 @@ _pgmg_ensure_service() {
   return 1
 }
 
+_pgmg_print_access_safety() {
+  local port="$1"
+  ui_info "Prefer SSH tunnel: ssh -L ${port}:127.0.0.1:${port} user@server"
+  ui_info "Firewall tip: ufw allow from YOUR_IP to any port ${port} proto tcp"
+  ui_warn "Do not expose this panel to the whole internet without a password/token."
+}
+
 _pgmg_print_wizard_access() {
-  local ip port token url
+  local ip port token
   ip="$(_pgmg_server_ip)"
   port="$(_pgmg_wizard_port)"
   token="$(_pgmg_read_file_token "${PG_WIZARD_DIR}/.access_token" || true)"
@@ -178,16 +219,17 @@ _pgmg_print_wizard_access() {
   ui_kv "Install dir" "$PG_WIZARD_DIR"
   ui_kv "Service" "$PG_WIZARD_SERVICE"
   ui_kv "Port" "$port"
+  # Prefer localhost — avoids putting secrets in a public cleartext URL
+  ui_kv "Local URL" "http://127.0.0.1:${port}/"
+  ui_kv "Public URL" "http://${ip}:${port}/"
   if [[ -n "$token" ]]; then
-    url="http://${ip}:${port}/?token=${token}"
-    ui_kv "URL" "$url"
+    ui_kv "Access token" "$token"
     ui_kv "Token file" "${PG_WIZARD_DIR}/.access_token"
-    ui_info "Open the URL above — token is already in the link."
+    ui_info "Paste the token in the wizard UI — it is NOT embedded in the URL."
   else
-    url="http://${ip}:${port}/"
-    ui_kv "URL" "$url"
     ui_warn "Access token missing — cat ${PG_WIZARD_DIR}/.access_token"
   fi
+  _pgmg_print_access_safety "$port"
   if _pgmg_service_active "$PG_WIZARD_SERVICE"; then
     ui_success "Service is active"
   else
@@ -197,7 +239,7 @@ _pgmg_print_wizard_access() {
 }
 
 _pgmg_print_backup_access() {
-  local ip port token url
+  local ip port token
   ip="$(_pgmg_server_ip)"
   port="$(_pgmg_backup_port)"
   token="$(_pgmg_read_file_token "${PG_BACKUP_DIR}/backup_panel/.setup_token" || true)"
@@ -205,8 +247,8 @@ _pgmg_print_backup_access() {
   ui_kv "Install dir" "$PG_BACKUP_DIR"
   ui_kv "Service" "$PG_BACKUP_SERVICE"
   ui_kv "Port" "$port"
-  url="http://${ip}:${port}/"
-  ui_kv "URL" "$url"
+  ui_kv "Local URL" "http://127.0.0.1:${port}/"
+  ui_kv "Public URL" "http://${ip}:${port}/"
   if [[ -n "$token" ]]; then
     ui_kv "Setup token" "$token"
     ui_kv "Token file" "${PG_BACKUP_DIR}/backup_panel/.setup_token"
@@ -214,6 +256,7 @@ _pgmg_print_backup_access() {
   else
     ui_info "Setup token already consumed (password was set) — log in with your password."
   fi
+  _pgmg_print_access_safety "$port"
   if _pgmg_service_active "$PG_BACKUP_SERVICE"; then
     ui_success "Service is active"
   else

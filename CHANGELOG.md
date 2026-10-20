@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.8 — 2026-10-20
+
+### Fixed
+- **SSL renew behind HAProxy**: ACME pre/post hooks temporarily stop/start
+  reverse proxies on :80 so HTTP-01 (and cron renew) works after HAProxy setup
+- **Renew / Show .env no longer undo HAProxy**: renew does not rewrite panel
+  `.env`; apply-env detects HAProxy panel mode and keeps `UVICORN_SSL_*` commented;
+  Show .env defaults to **N**
+
+### Security
+- **PGClockMG installer** pinned to release tag + SHA-256 verification (fail closed)
+- Wizard/Backup access prints **localhost URL** + token separately (no `?token=` in URL)
+  and adds SSH-tunnel / UFW guidance
+- HAProxy backend host / host:port inputs validated before writing config
+
 ## 0.3.7 — 2026-10-20
 
 ### Changed
