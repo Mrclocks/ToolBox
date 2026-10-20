@@ -612,13 +612,12 @@ _ssl_apply_env_paths() {
         fi
         _ssl_env_upsert "$panel_env" "UVICORN_SSL_CERTFILE" "$cert_path" spaced
         _ssl_env_upsert "$panel_env" "UVICORN_SSL_KEYFILE" "$key_path" spaced
-        _ssl_env_upsert "$panel_env" "UVICORN_PORT" "443" bare
         # Direct TLS mode — UDS is for reverse-proxy setups
         _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
         ui_success "Panel .env updated: ${panel_env}"
         ui_kv "UVICORN_SSL_CERTFILE" "$cert_path"
         ui_kv "UVICORN_SSL_KEYFILE" "$key_path"
-        ui_kv "UVICORN_PORT" "443"
+        ui_info "UVICORN_PORT left unchanged (change it yourself if you want 443)"
         _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
         applied=1
       else
@@ -686,12 +685,11 @@ _ssl_print_env_guide() {
       ui_kv "Panel cert" "${SSL_PANEL_CERT_DIR}/${primary}.cer"
       ui_kv "Panel key" "${SSL_PANEL_CERT_DIR}/${primary}.cer.key"
       if [[ -f /opt/pasarguard/.env ]]; then
-        ui_success "Written into /opt/pasarguard/.env (UVICORN_SSL_* + PORT=443)"
+        ui_success "Written into /opt/pasarguard/.env (UVICORN_SSL_* only; port untouched)"
       else
         ui_info "If you install the panel later, re-run SSL → Show .env / path instructions"
         printf '   UVICORN_SSL_CERTFILE = "%s/%s.cer"\n' "$SSL_PANEL_CERT_DIR" "$primary"
         printf '   UVICORN_SSL_KEYFILE  = "%s/%s.cer.key"\n' "$SSL_PANEL_CERT_DIR" "$primary"
-        printf '   UVICORN_PORT = 443\n'
       fi
       if ((${#domains[@]} > 1)); then
         ui_info "SAN aliases also on disk:"

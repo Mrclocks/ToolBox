@@ -125,11 +125,11 @@ UVICORN_UDS = "/var/lib/pasarguard/pasarguard.socket"
 EOF
   _ssl_env_upsert "$envf" "UVICORN_SSL_CERTFILE" "/var/lib/pasarguard/certs/a.cer" spaced
   _ssl_env_upsert "$envf" "UVICORN_SSL_KEYFILE" "/var/lib/pasarguard/certs/a.cer.key" spaced
-  _ssl_env_upsert "$envf" "UVICORN_PORT" "443" spaced
   _ssl_env_comment_key "$envf" "UVICORN_UDS"
   grep -q 'UVICORN_SSL_CERTFILE = "/var/lib/pasarguard/certs/a.cer"' "$envf"
   grep -q 'UVICORN_SSL_KEYFILE = "/var/lib/pasarguard/certs/a.cer.key"' "$envf"
-  grep -qE 'UVICORN_PORT = "?443"?' "$envf"
+  # Port must stay untouched by SSL helpers
+  grep -q 'UVICORN_PORT = 8000' "$envf"
   ! grep -qE '^[[:space:]]*UVICORN_SSL_CERTFILE = "/old/' "$envf"
   grep -qE '^# UVICORN_UDS' "$envf"
 }

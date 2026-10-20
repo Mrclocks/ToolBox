@@ -1,12 +1,18 @@
 # Changelog
 
+## 0.3.5 — 2026-10-20
+
+### Changed
+- SSL auto `.env` update no longer touches `UVICORN_PORT` (user decides)
+
 ## 0.3.4 — 2026-10-20
 
 ### Added
 - **SSL auto `.env` update**: after Issue/Renew, ToolBox replaces Panel
-  `UVICORN_SSL_*` + `UVICORN_PORT=443` in `/opt/pasarguard/.env` and Node
+  `UVICORN_SSL_*` in `/opt/pasarguard/.env` and Node
   `SSL_CERT_FILE` / `SSL_KEY_FILE` in `/opt/pg-node/.env` (and compose),
   then restarts compose when possible. Show `.env` can re-apply.
+  (`UVICORN_PORT` left alone as of 0.3.5)
 
 ## 0.3.3 — 2026-10-20
 

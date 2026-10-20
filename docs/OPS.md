@@ -34,8 +34,8 @@ Preflight checks DNS (soft) and that port **80** is free for ACME HTTP-01.
 
 After **Issue / Setup**, ToolBox **automatically** writes paths into:
 
-- Panel: `/opt/pasarguard/.env` → `UVICORN_SSL_CERTFILE`, `UVICORN_SSL_KEYFILE`, `UVICORN_PORT=443`
-  (and comments out `UVICORN_UDS` for direct TLS)
+- Panel: `/opt/pasarguard/.env` → `UVICORN_SSL_CERTFILE`, `UVICORN_SSL_KEYFILE` only
+  (`UVICORN_PORT` is never changed; `UVICORN_UDS` is commented for direct TLS)
 - Node: `/opt/pg-node/.env` (+ compose `SSL_CERT_FILE` / `SSL_KEY_FILE` when present)
 
 Then it restarts the matching docker compose stack when possible.
