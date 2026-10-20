@@ -69,7 +69,7 @@ ${C_ORANGE}${C_BOLD}
   | |\/| | '__| |   | |/ _ \ / __| |/ /
   | |  | | |  | |___| | (_) | (__|   <
   |_|  |_|_|   \____|_|\___/ \___|_|\_\\
-${C_RESET}${C_DIM}   VPN Hardening & Optimization Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
+${C_RESET}${C_DIM}   PasarGuard Ops Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
 EOF
   ui_line 64
   ui_server_status_panel

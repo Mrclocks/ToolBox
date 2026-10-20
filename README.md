@@ -60,14 +60,31 @@ sudo mrclock --verify
 
 ## Features
 
+Categorized menu:
+
+1. **Optimization** — Apply All, DNS/MTU/BBR, UFW, SSH, Fail2Ban, abuse block, undo
+2. **SSL Certificates** — PasarGuard Panel/Node issue + auto-renew (acme.sh)
+3. **Reverse Proxy** — HAProxy / Caddy / Nginx (rolling out)
+4. **Backup** — PGClockBackup bridge (rolling out)
+5. **Restore & Migrate** — PGClockMG wizard bridge (rolling out)
+
+Optimization details:
+
 - Apply All: **Automatic (low-risk)** or **Customize** — Plan screen + preflight first
 - DNS (live dig benchmark), MTU (default keep / MSS clamp), BBR
 - UFW autopilot, SSH hardening (`00-securebox.conf`), Fail2Ban
 - Optional abuse CIDR block (minimal / aggressive profiles)
 - Optional IPv6 disable (refuses if your SSH session is IPv6)
-- Restore previous configs + live MTU/sysctl/services/UFW state
+- Undo Toolbox Changes + live MTU/sysctl/services/UFW state
 - Verify module: `sshd -T`, `ss`, `resolvectl`, `ufw`, `tc`, sysctl
 - Timed auto-rollback for SSH/UFW/DNS/MTU unless you confirm
+
+SSL details:
+
+- Auto-detect Panel vs Node paths; multi-domain SAN
+- Deploys to `/var/lib/pasarguard/certs/` and/or `/var/lib/pg-node/certs/`
+- Prints exact `.env` / `SSL_CERT_FILE` settings after install
+- Auto-renew via acme.sh cron + deploy hook
 
 Rule #1: never lock out the admin or cut connectivity.
 

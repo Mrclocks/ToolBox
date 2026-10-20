@@ -497,12 +497,11 @@ parse_args() {
   export SECUREBOX_DRY_RUN SECUREBOX_ROLLBACK_SECONDS
 }
 
-menu_loop() {
+optimization_menu_loop() {
   while true; do
-    # Full-screen clean draw every return to main menu
     ui_clear
     ui_banner
-    printf '%sMain menu%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
+    printf '%sOptimization%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
     ui_line 56 '-'
     printf '  %s 1)%s Apply All Features\n' "$C_GREEN" "$C_RESET"
     printf '  %s 2)%s System Update & Upgrade\n' "$C_ORANGE" "$C_RESET"
@@ -518,10 +517,10 @@ menu_loop() {
     printf '  %s12)%s Unattended Upgrades\n' "$C_ORANGE" "$C_RESET"
     printf '  %s13)%s Disable Unused Services\n' "$C_ORANGE" "$C_RESET"
     printf '  %s14)%s Clean Logs (Ubuntu/Docker)\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s15)%s Restore previous changes\n' "$C_GREEN" "$C_RESET"
+    printf '  %s15)%s Undo Toolbox Changes\n' "$C_GREEN" "$C_RESET"
     printf '  %s16)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
     printf '  %s17)%s Verify (sshd/ss/resolvectl/ufw/tc/sysctl)\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
+    printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
     ui_line 56 '-'
     local choice
     printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
@@ -623,6 +622,42 @@ menu_loop() {
         run_single verify
         ui_pause
         ;;
+      0|b|B)
+        return 0
+        ;;
+      *)
+        ui_warn "Invalid selection."
+        sleep 1
+        ;;
+    esac
+  done
+}
+
+menu_loop() {
+  while true; do
+    # Full-screen clean draw every return to main menu
+    ui_clear
+    ui_banner
+    printf '%sMain menu%s\n' "$C_BOLD$C_ORANGE" "$C_RESET"
+    ui_line 56 '-'
+    printf '  %s 1)%s Optimization\n' "$C_GREEN" "$C_RESET"
+    printf '  %s 2)%s SSL Certificates\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 3)%s Reverse Proxy\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 4)%s Backup\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 5)%s Restore & Migrate\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
+    ui_line 56 '-'
+    local choice
+    printf '%sSelect%s: ' "$C_ORANGE" "$C_RESET"
+    ui_read choice
+    choice="$(trim "${choice:-0}")"
+
+    case "$choice" in
+      1) optimization_menu_loop ;;
+      2) ssl_menu_loop ;;
+      3) proxy_menu_loop ;;
+      4) pgbackup_menu_loop ;;
+      5) pgrestore_menu_loop ;;
       0|q|Q|exit)
         ui_info "Goodbye."
         exit 0

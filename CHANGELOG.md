@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 — 2026-10-20
+
+### Added
+- **Categorized main menu** (English): Optimization, SSL Certificates,
+  Reverse Proxy, Backup, Restore & Migrate
+- **SSL Certificates**: acme.sh issue, multi-domain (SAN), Panel/Node path
+  deploy, auto-renew cron + deploy hook, Status / Renew now
+- End-of-setup guide prints exact `.env` / compose `SSL_*` paths for Panel and Node
+- Scaffold menus for Reverse Proxy (HAProxy/Caddy/Nginx) and PGClockMG
+  Backup / Restore & Migrate bridges
+
+### Changed
+- Toolbox undo renamed to **Undo Toolbox Changes** (under Optimization)
+  to avoid confusion with PasarGuard restore
+
 ## 0.2.3 — 2026-10-13
 
 ### Fixed
