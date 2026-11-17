@@ -5,6 +5,13 @@ set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# bats < 1.4 (Ubuntu 22.04) has no BATS_TEST_TMPDIR: give every test its own
+# dir so state never leaks between tests via a shared /tmp path.
+if [[ -z "${BATS_TEST_TMPDIR:-}" ]]; then
+  BATS_TEST_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/bats-test.XXXXXX")"
+fi
+export BATS_TEST_TMPDIR
+
 # Minimal stubs so sourcing modules does not explode
 export SECUREBOX_ROOT="$REPO_ROOT"
 export SECUREBOX_BACKUP_ROOT="${BATS_TEST_TMPDIR:-/tmp}/securebox-bak"
