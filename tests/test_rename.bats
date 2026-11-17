@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   # shellcheck disable=SC1091
   PGCTB_INSTALL_LIB_ONLY=1 source "${REPO_ROOT}/install.sh"
   T="${BATS_TEST_TMPDIR}/mig"

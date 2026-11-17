@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.0 — 2026-11-17
+
+### Added
+- **Optimization levels**: 🟢 Safe (low) and 🟡 Balanced (low + mid); 🔴 SSH /
+  UFW / abuse block are never part of a level
+- **Security menu**: 🔴 items one at a time behind a warning screen that needs a
+  typed `YES` (refused without a TTY)
+- **Commands**: `pgclock status`, `optimize low|mid [--yes]`,
+  `ssl status|renew|repair`, `proxy status`; `--yes` flag
+- **Update**: safe mode (`apt-get upgrade`), Docker packages held during the
+  upgrade unless explicitly allowed (no surprise container restarts)
+
+### Changed
+- Main menu: Status · SSL · HAProxy · Optimization · Security · Backup & Restore · Tools
+- Menus moved from `install.sh` to `lib/menu.sh`; levels in `lib/levels.sh`
+- Fail2Ban `ignoreip` includes every admin IP (all SSH sessions + `PGCTB_ADMIN_IPS`)
+
+### Fixed
+- A non-numeric DNS choice could wrap to the last preset; now treated as keep
+- Tests: per-test state dirs also on bats < 1.4 (Ubuntu 22.04 CI failure)
+
+
 ## 0.5.0 — 2026-11-17
 
 ### Added — safety core (`lib/safety.sh`)

@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   # Minimal stubs for ask_* dependencies
   detect_network_stack() { NET_DEFAULT_IFACE=eth0; NET_DEFAULT_MTU=1500; }
   detect_dns_manager() { DNS_MANAGER=static-resolv; DNS_CURRENT=(1.1.1.1); }

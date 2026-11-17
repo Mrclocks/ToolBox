@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   PGCTB_STATE_DIR="${BATS_TEST_TMPDIR}/state"
   PGCTB_BACKUP_ROOT="${BATS_TEST_TMPDIR}/bak"
   PGCTB_ROLLBACK_DIR="${PGCTB_STATE_DIR}/rollback"

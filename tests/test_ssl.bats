@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/modules/ssl.sh"
   SSL_STATE_DIR="${PGCTB_STATE_DIR}/ssl"
@@ -230,14 +231,15 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "menu labels are English in install.sh" {
-  grep -q 'SSL Certificates' "${REPO_ROOT}/install.sh"
-  grep -q 'Optimization' "${REPO_ROOT}/install.sh"
-  grep -q 'Undo Toolbox Changes' "${REPO_ROOT}/install.sh"
-  grep -q 'Restore & Migrate' "${REPO_ROOT}/install.sh"
-  grep -q 'Reverse Proxy' "${REPO_ROOT}/install.sh"
+@test "menu labels are English in lib/menu.sh" {
+  local m="${REPO_ROOT}/lib/menu.sh"
+  grep -q 'SSL Certificates' "$m"
+  grep -q 'Optimization' "$m"
+  grep -q 'Undo PGClockTB changes' "$m"
+  grep -q 'Restore & Migrate' "$m"
+  grep -q 'Reverse Proxy' "$m"
   # No Arabic/Persian script in menu entry points
-  ! grep -E 'بهینه|بکاپ|ریستور|سرتیفیکیت|منو' "${REPO_ROOT}/install.sh"
+  ! grep -E 'بهینه|بکاپ|ریستور|سرتیفیکیت|منو' "$m" "${REPO_ROOT}/install.sh"
 }
 
 @test "SSL menu includes env guide and repair entries" {

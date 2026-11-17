@@ -2,17 +2,15 @@
 # Module: Fail2Ban — only when explicitly enabled
 # shellcheck shell=bash
 
-_fail2ban_admin_ip() {
-  local ip=""
-  if [[ -n "${SSH_CONNECTION:-}" ]]; then
-    ip="$(awk '{print $1}' <<<"$SSH_CONNECTION")"
-  elif [[ -n "${SSH_CLIENT:-}" ]]; then
-    ip="$(awk '{print $1}' <<<"$SSH_CLIENT")"
+_fail2ban_admin_ips() {
+  # Space-separated admin IPs (SSH sessions + PGCTB_ADMIN_IPS) — never banned
+  local -a ips=()
+  if declare -F pgctb_admin_ips >/dev/null 2>&1; then
+    mapfile -t ips < <(pgctb_admin_ips)
+  elif [[ -n "${SSH_CONNECTION:-}" ]]; then
+    ips=("${SSH_CONNECTION%% *}")
   fi
-  # Prefer IPv4 for ignoreip simplicity; still accept IPv6
-  if [[ -n "$ip" ]]; then
-    printf '%s\n' "$ip"
-  fi
+  printf '%s\n' "${ips[*]}"
 }
 
 module_fail2ban() {
@@ -44,11 +42,11 @@ module_fail2ban() {
   fi
 
   local admin_ip ignore
-  admin_ip="$(_fail2ban_admin_ip)"
+  admin_ip="$(_fail2ban_admin_ips)"
   ignore="127.0.0.1/8 ::1"
   if [[ -n "$admin_ip" ]]; then
     ignore="${ignore} ${admin_ip}"
-    ui_info "Adding admin IP to Fail2Ban ignoreip: ${admin_ip}"
+    ui_info "Adding admin IPs to Fail2Ban ignoreip: ${admin_ip}"
   fi
 
   if is_dry_run; then

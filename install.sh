@@ -388,20 +388,35 @@ source "${PGCTB_ROOT}/lib/plan.sh"
 source "${PGCTB_ROOT}/lib/pgclockmg.sh"
 # shellcheck disable=SC1091
 source "${PGCTB_ROOT}/lib/runner.sh"
+# shellcheck disable=SC1091
+source "${PGCTB_ROOT}/lib/levels.sh"
+# shellcheck disable=SC1091
+source "${PGCTB_ROOT}/lib/menu.sh"
 
 source_modules
 usage() {
   cat <<EOF
 ${PGCTB_NAME} v${PGCTB_VERSION}
 
-Usage: sudo bash install.sh [options]
+Usage: sudo pgclock [command] [options]
+
+Commands:
+  (none)               Interactive menu
+  status               Status report + verify, then exit
+  optimize low|mid     Apply the 🟢 Safe or 🟡 Balanced level (add --yes without a TTY)
+  ssl status|renew|repair
+                       SSL certificate status / force renew / repair auto-renew
+  proxy status         HAProxy status
 
 Modes:
-  (default)            Interactive menu
-  --one-click          Non-interactive Apply All with safe defaults
+  --one-click          Non-interactive Apply All with safe defaults (legacy)
   --dry-run            Plan only — show what would change, do not apply
   --verify             Run the verify module and exit
+  --yes, -y            Do not ask for confirmation (levels / one-click)
   --help, -h           Show this help
+
+Risk levels: 🟢 low · 🟡 mid · 🔴 high. Levels never touch 🔴 SSH / UFW /
+abuse block — use the Security menu for those (one at a time, typed YES).
 
 SSH / network:
   --ssh-port <port>    SSH port (1–65535) for --one-click
@@ -491,8 +506,33 @@ defaults_one_click() {
 parse_args() {
   PGCTB_MODE=menu
   PGCTB_DRY_RUN=0
+  PGCTB_ASSUME_YES=0
+  PGCTB_CMD_ARG=""
+  # Optional leading subcommand
+  case "${1-}" in
+    status) PGCTB_MODE=status; shift ;;
+    optimize|optimise)
+      case "${2-}" in
+        low|mid) PGCTB_MODE=level; PGCTB_CMD_ARG="$2"; shift 2 ;;
+        *) ui_error "optimize needs: low | mid"; exit 1 ;;
+      esac
+      ;;
+    ssl)
+      case "${2-}" in
+        status|renew|repair) PGCTB_MODE=ssl; PGCTB_CMD_ARG="$2"; shift 2 ;;
+        *) ui_error "ssl needs: status | renew | repair"; exit 1 ;;
+      esac
+      ;;
+    proxy)
+      case "${2-}" in
+        status) PGCTB_MODE=proxy; PGCTB_CMD_ARG="$2"; shift 2 ;;
+        *) ui_error "proxy needs: status"; exit 1 ;;
+      esac
+      ;;
+  esac
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --yes|-y) PGCTB_ASSUME_YES=1; shift ;;
       --one-click) PGCTB_MODE=one_click; shift ;;
       --dry-run) PGCTB_DRY_RUN=1; PGCTB_MODE="${PGCTB_MODE:-menu}"; shift ;;
       --verify) PGCTB_MODE=verify; shift ;;
@@ -548,176 +588,6 @@ parse_args() {
     esac
   done
   export PGCTB_DRY_RUN PGCTB_ROLLBACK_SECONDS
-}
-
-optimization_menu_loop() {
-  while true; do
-    ui_clear
-    ui_banner
-    ui_menu_title "Optimization"
-    printf '  %s 1)%s Apply All Features\n' "$C_GREEN" "$C_RESET"
-    printf '  %s 2)%s System Update & Upgrade\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 3)%s Time Sync (chrony)\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 4)%s DNS Resolver\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 5)%s MTU Tuning\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 6)%s BBR + Network Tuning\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 7)%s Abuse IP Range Block\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 8)%s UFW Autopilot\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 9)%s SSH Port & Hardening\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s10)%s Fail2Ban\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s11)%s IPv6 Disable\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s12)%s Unattended Upgrades\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s13)%s Disable Unused Services\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s14)%s Clean Logs (Ubuntu/Docker)\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s15)%s Undo Toolbox Changes\n' "$C_GREEN" "$C_RESET"
-    printf '  %s16)%s Show Status Report\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s17)%s Verify (sshd/ss/resolvectl/ufw/tc/sysctl)\n' "$C_ORANGE" "$C_RESET"
-    ui_menu_back_line
-    local choice
-    printf '%sSelect%s [0-17]: ' "$C_ORANGE" "$C_RESET"
-    ui_read choice
-    choice="$(trim "${choice:-}")"
-
-    case "$choice" in
-      1)
-        ui_clear
-        if questionnaire_all; then
-          run_pipeline_all
-          ui_pause
-        else
-          ui_pause
-        fi
-        ;;
-      2)
-        ui_clear
-        questionnaire_update_only && run_single update && run_single report
-        ui_pause
-        ;;
-      3)
-        ui_clear
-        questionnaire_timesync_only && run_single timesync && run_single report
-        ui_pause
-        ;;
-      4)
-        ui_clear
-        questionnaire_dns_only && run_single dns && run_single report
-        ui_pause
-        ;;
-      5)
-        ui_clear
-        questionnaire_mtu_only && run_single mtu && run_single report
-        ui_pause
-        ;;
-      6)
-        ui_clear
-        questionnaire_bbr_only && run_single bbr && run_single report
-        ui_pause
-        ;;
-      7)
-        ui_clear
-        questionnaire_abuse_only && run_single abuse && run_single report
-        ui_pause
-        ;;
-      8)
-        ui_clear
-        if questionnaire_ufw_only; then
-          run_single ufw
-          # IPv6 was asked during UFW questionnaire — honor it
-          run_single ipv6
-          run_single report
-        fi
-        ui_pause
-        ;;
-      9)
-        ui_clear
-        questionnaire_ssh_only && run_single ssh && run_single report
-        ui_pause
-        ;;
-      10)
-        ui_clear
-        questionnaire_fail2ban_only && run_single fail2ban && run_single report
-        ui_pause
-        ;;
-      11)
-        ui_clear
-        questionnaire_ipv6_only && run_single ipv6 && run_single report
-        ui_pause
-        ;;
-      12)
-        ui_clear
-        questionnaire_unattended_only && run_single unattended && run_single report
-        ui_pause
-        ;;
-      13)
-        ui_clear
-        questionnaire_services_only && run_single services && run_single report
-        ui_pause
-        ;;
-      14)
-        ui_clear
-        questionnaire_logs_only && run_single logs && run_single report
-        ui_pause
-        ;;
-      15)
-        ui_clear
-        questionnaire_restore_only && run_single restore && run_single report
-        ui_pause
-        ;;
-      16)
-        ui_clear
-        run_single report
-        ui_pause
-        ;;
-      17)
-        ui_clear
-        run_single verify
-        ui_pause
-        ;;
-      0|b|B|back|Back)
-        return 0
-        ;;
-      *)
-        ui_warn "Invalid selection."
-        sleep 1
-        ;;
-    esac
-  done
-}
-
-menu_loop() {
-  while true; do
-    # Full-screen clean draw every return to main menu
-    ui_clear
-    ui_banner
-    ui_menu_title "Main menu"
-    printf '  %s 1)%s Optimization\n' "$C_GREEN" "$C_RESET"
-    printf '  %s 2)%s SSL Certificates\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 3)%s Reverse Proxy (HAProxy)\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 4)%s Backup\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 5)%s Restore & Migrate\n' "$C_ORANGE" "$C_RESET"
-    printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
-    ui_line 56 '-'
-    local choice
-    printf '%sSelect%s [0-5]: ' "$C_ORANGE" "$C_RESET"
-    ui_read choice
-    choice="$(trim "${choice:-}")"
-
-    case "$choice" in
-      1) optimization_menu_loop ;;
-      2) ssl_menu_loop ;;
-      3) proxy_menu_loop ;;
-      4) pgbackup_menu_loop ;;
-      5) pgrestore_menu_loop ;;
-      0|q|Q|exit|Exit)
-        ui_info "Goodbye."
-        exit 0
-        ;;
-      *)
-        ui_warn "Invalid selection."
-        sleep 1
-        ;;
-    esac
-  done
 }
 
 main() {
@@ -808,6 +678,26 @@ main() {
       if ((${#PGCTB_FAILED_MODULES[@]} > 0)); then
         exit 1
       fi
+      ;;
+    status)
+      ui_banner
+      run_single report
+      run_single verify
+      ((${#PGCTB_FAILED_MODULES[@]} == 0)) || exit 1
+      ;;
+    level)
+      ui_banner
+      run_level "$PGCTB_CMD_ARG" "$PGCTB_ASSUME_YES" || exit 1
+      ;;
+    ssl)
+      case "$PGCTB_CMD_ARG" in
+        status) ssl_status ;;
+        renew) ssl_renew_now || exit 1 ;;
+        repair) ssl_repair_autorenew || exit 1 ;;
+      esac
+      ;;
+    proxy)
+      proxy_status
       ;;
     menu)
       menu_loop

@@ -5,6 +5,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   T="${BATS_TEST_TMPDIR}/safety"
   mkdir -p "$T"
   PGCTB_TXN_DIR="${T}/txn"

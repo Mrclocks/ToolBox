@@ -1,6 +1,10 @@
 #!/usr/bin/env bats
 load helpers
 
+setup() {
+  pgctb_test_dirs
+}
+
 @test "is_dry_run respects PGCTB_DRY_RUN" {
   PGCTB_DRY_RUN=0
   run is_dry_run

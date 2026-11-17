@@ -206,6 +206,13 @@ dns_resolve_choice() {
     DNS_SECONDARY="${PGCTB_ANSWERS[dns_secondary]:-}"
     return 0
   fi
+  if ! is_uint "$idx" || (( idx < 1 || idx > ${#DNS_PRESETS[@]} )); then
+    # Never let a non-numeric/out-of-range index pick a preset by accident
+    DNS_CHOICE_ID="keep"
+    DNS_PRIMARY=""
+    DNS_SECONDARY=""
+    return 0
+  fi
   local p="${DNS_PRESETS[$((idx - 1))]}"
   local id label primary secondary
   IFS='|' read -r id label primary secondary <<<"$p"

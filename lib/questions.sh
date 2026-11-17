@@ -553,6 +553,14 @@ questionnaire_bbr_only() {
 questionnaire_update_only() {
   questionnaire_common_safety
   ask_update
+  if answered_yes do_update; then
+    if ui_confirm "Safe upgrade only? (apt-get upgrade — never removes packages)" "Y"; then
+      PGCTB_ANSWERS[update_mode]=safe
+    else
+      PGCTB_ANSWERS[update_mode]=full
+    fi
+    ask_update_docker_policy
+  fi
   review_answers
   answered_yes do_update && ui_confirm "Run update now?" "Y"
 }

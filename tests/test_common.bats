@@ -3,6 +3,10 @@
 
 load helpers
 
+setup() {
+  pgctb_test_dirs
+}
+
 @test "is_port accepts valid ports" {
   run is_port 22
   [ "$status" -eq 0 ]

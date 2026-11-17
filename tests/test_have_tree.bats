@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   # Real helper from install.sh (guard stops before bootstrap)
   # shellcheck disable=SC1091
   PGCTB_INSTALL_LIB_ONLY=1 source "${REPO_ROOT}/install.sh"

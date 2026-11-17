@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/lib/pgclockmg.sh"
   PG_WIZARD_DIR="${PGCTB_STATE_DIR}/fake-wizard"
