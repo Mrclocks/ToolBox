@@ -34,11 +34,11 @@ module_report() {
 
   echo
   ui_line 72
-  printf '%s%s  MrClock — completion report%s\n' "$C_BOLD" "$C_ORANGE" "$C_RESET"
+  printf '%s%s  PGClockTB — completion report%s\n' "$C_BOLD" "$C_ORANGE" "$C_RESET"
   ui_line 72
   ui_kv "OS" "$OS_PRETTY"
-  ui_kv "Log file" "$SECUREBOX_LOG"
-  ui_kv "Backup dir" "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  ui_kv "Log file" "$PGCTB_LOG"
+  ui_kv "Backup dir" "${PGCTB_BACKUP_ROOT}/${PGCTB_RUN_ID}"
   ui_kv "Network stack" "$NET_STACK"
   ui_kv "DNS manager" "$DNS_MANAGER"
   ui_kv "DNS now" "${DNS_CURRENT[*]:-unknown}"
@@ -48,19 +48,19 @@ module_report() {
   ui_kv "SSH ports" "$ssh_ports"
   ui_kv "Fail2Ban" "$f2b_st"
   ui_kv "IPv6" "$ipv6_st"
-  ui_kv "Modules OK" "${SECUREBOX_OK_MODULES[*]:-none}"
-  if ((${#SECUREBOX_SKIPPED_MODULES[@]})); then
-    ui_kv "Skipped" "${SECUREBOX_SKIPPED_MODULES[*]}"
+  ui_kv "Modules OK" "${PGCTB_OK_MODULES[*]:-none}"
+  if ((${#PGCTB_SKIPPED_MODULES[@]})); then
+    ui_kv "Skipped" "${PGCTB_SKIPPED_MODULES[*]}"
   fi
-  if ((${#SECUREBOX_FAILED_MODULES[@]})); then
-    ui_kv "Failed" "${SECUREBOX_FAILED_MODULES[*]}"
+  if ((${#PGCTB_FAILED_MODULES[@]})); then
+    ui_kv "Failed" "${PGCTB_FAILED_MODULES[*]}"
   fi
-  if is_true "${SECUREBOX_ANSWERS[reboot_needed]:-no}" || [[ -f /var/run/reboot-required ]]; then
+  if is_true "${PGCTB_ANSWERS[reboot_needed]:-no}" || [[ -f /var/run/reboot-required ]]; then
     ui_warn "Reboot recommended to finalize kernel/IPv6/network changes."
   fi
-  if [[ -f "${SECUREBOX_STATE_DIR}/ssh_cutover" && "$(cat "${SECUREBOX_STATE_DIR}/ssh_cutover")" == "pending" ]]; then
+  if [[ -f "${PGCTB_STATE_DIR}/ssh_cutover" && "$(cat "${PGCTB_STATE_DIR}/ssh_cutover")" == "pending" ]]; then
     ui_warn "SSH cutover still PENDING — both old and new ports are listening."
-    ui_info "New terminal test: ssh -p $(cat "${SECUREBOX_STATE_DIR}/ssh_new_port") USER@HOST"
+    ui_info "New terminal test: ssh -p $(cat "${PGCTB_STATE_DIR}/ssh_new_port") USER@HOST"
   fi
   ui_line 72
   echo

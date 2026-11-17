@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Module: abuse IP range blocking + anti-abuse posture
-# Applies ONLY when SECUREBOX_ANSWERS[block_abuse] is explicitly yes.
+# Applies ONLY when PGCTB_ANSWERS[block_abuse] is explicitly yes.
 # shellcheck shell=bash
 
-# Resolve at call time (not source time) so SECUREBOX_DATA cannot go stale.
+# Resolve at call time (not source time) so PGCTB_DATA cannot go stale.
 _abuse_ranges_minimal() {
-  printf '%s\n' "${SECUREBOX_DATA}/abuse-ranges.txt"
+  printf '%s\n' "${PGCTB_DATA}/abuse-ranges.txt"
 }
 _abuse_ranges_aggressive() {
-  printf '%s\n' "${SECUREBOX_DATA}/abuse-ranges-aggressive.txt"
+  printf '%s\n' "${PGCTB_DATA}/abuse-ranges-aggressive.txt"
 }
 
 _abuse_load_cidrs() {
@@ -27,8 +27,8 @@ _abuse_load_cidrs() {
 }
 
 _abuse_resolve_file() {
-  local profile="${SECUREBOX_ANSWERS[abuse_profile]:-minimal}"
-  local custom="${SECUREBOX_ANSWERS[abuse_file]:-}"
+  local profile="${PGCTB_ANSWERS[abuse_profile]:-minimal}"
+  local custom="${PGCTB_ANSWERS[abuse_file]:-}"
   local minimal aggressive
   minimal="$(_abuse_ranges_minimal)"
   aggressive="$(_abuse_ranges_aggressive)"
@@ -48,6 +48,34 @@ _abuse_resolve_file() {
       printf '%s\n' "$minimal"
       ;;
   esac
+}
+
+_abuse_protect_admin() {
+  # Fill ABUSE_ADMIN_IPS (always accepted before the drop rule) and report any
+  # admin IP that falls inside a blocked range. Returns 1 to refuse the change.
+  ABUSE_ADMIN_IPS=()
+  mapfile -t ABUSE_ADMIN_IPS < <(pgctb_admin_ips)
+  if ((${#ABUSE_ADMIN_IPS[@]} == 0)); then
+    ui_warn "Could not detect your admin IP (no SSH_CONNECTION / who --ips)."
+    ui_info "Set it explicitly to be safe: PGCTB_ADMIN_IPS=\"1.2.3.4\" pgclock"
+    if have_tty; then
+      ui_confirm "Apply the blocklist without an admin-IP exception?" "N" || return 1
+      return 0
+    fi
+    return 1
+  fi
+  ui_info "Admin IPs always allowed: ${ABUSE_ADMIN_IPS[*]}"
+  local a c
+  for a in "${ABUSE_ADMIN_IPS[@]}"; do
+    is_ipv4 "$a" || continue
+    for c in "${CIDRS[@]}"; do
+      if ipv4_in_cidr "$a" "$c"; then
+        ui_warn "Your admin IP ${a} is inside blocked range ${c} — kept reachable by an explicit allow rule."
+        break
+      fi
+    done
+  done
+  return 0
 }
 
 _abuse_ensure_nft_or_iptables() {
@@ -81,7 +109,7 @@ _abuse_apply_nft() {
   local i=0
   for c in "${cidrs[@]}"; do
     chunk+=("$c")
-    ((i++))
+    i=$((i + 1))
     if (( i % 40 == 0 )); then
       if nft add element inet securebox abuse4 "{ $(IFS=,; echo "${chunk[*]}") }" 2>/dev/null; then
         loaded=$((loaded + ${#chunk[@]}))
@@ -125,13 +153,22 @@ _abuse_apply_nft() {
 
   # Allow replies to our outbound connections BEFORE dropping abuse sources
   nft add rule inet securebox input ct state established,related accept
+  # Admin IPs are always accepted first — a blocklist must never lock you out
+  local a
+  for a in "${ABUSE_ADMIN_IPS[@]}"; do
+    if is_ipv4 "$a"; then
+      nft add rule inet securebox input ip saddr "$a" accept
+    else
+      nft add rule inet securebox input ip6 saddr "$a" accept 2>/dev/null || true
+    fi
+  done
   # Inbound only drop from abuse set
   nft add rule inet securebox input ip saddr @abuse4 drop
 
   mkdir -p /etc/nftables.d
   {
     echo '#!/usr/sbin/nft -f'
-    echo '# Managed by MrClock — safe reload on boot'
+    echo '# Managed by PGClockTB — safe reload on boot'
     echo 'table inet securebox'
     echo 'delete table inet securebox'
     nft list table inet securebox
@@ -153,19 +190,24 @@ _abuse_apply_nft() {
 _abuse_apply_iptables() {
   local -a cidrs=("$@")
   local loaded=0 failed=0
-  iptables -N SECUREBOX_ABUSE 2>/dev/null || iptables -F SECUREBOX_ABUSE
-  iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-  iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-  iptables -I INPUT 1 -j SECUREBOX_ABUSE
+  iptables -N PGCTB_ABUSE 2>/dev/null || iptables -F PGCTB_ABUSE
+  iptables -D INPUT -j PGCTB_ABUSE 2>/dev/null || true
+  iptables -D OUTPUT -j PGCTB_ABUSE 2>/dev/null || true
+  iptables -I INPUT 1 -j PGCTB_ABUSE
 
   # Allow established/related before drops so outbound replies work
-  iptables -A SECUREBOX_ABUSE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
-    || iptables -A SECUREBOX_ABUSE -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
+  iptables -A PGCTB_ABUSE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
+    || iptables -A PGCTB_ABUSE -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
     || true
+  # Admin IPs are always accepted first — a blocklist must never lock you out
+  local a
+  for a in "${ABUSE_ADMIN_IPS[@]}"; do
+    is_ipv4 "$a" && iptables -A PGCTB_ABUSE -s "$a" -j ACCEPT 2>/dev/null
+  done
 
   local c
   for c in "${cidrs[@]}"; do
-    if iptables -A SECUREBOX_ABUSE -s "$c" -j DROP 2>/dev/null; then
+    if iptables -A PGCTB_ABUSE -s "$c" -j DROP 2>/dev/null; then
       loaded=$((loaded + 1))
     else
       failed=$((failed + 1))
@@ -207,10 +249,10 @@ _abuse_remove_all() {
     rm -f /etc/nftables.d/securebox-abuse.nft 2>/dev/null || true
   fi
   if have_cmd iptables; then
-    iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-    iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-    iptables -F SECUREBOX_ABUSE 2>/dev/null || true
-    iptables -X SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -D INPUT -j PGCTB_ABUSE 2>/dev/null || true
+    iptables -D OUTPUT -j PGCTB_ABUSE 2>/dev/null || true
+    iptables -F PGCTB_ABUSE 2>/dev/null || true
+    iptables -X PGCTB_ABUSE 2>/dev/null || true
     if have_cmd netfilter-persistent; then
       netfilter-persistent save >/dev/null 2>&1 || true
     elif [[ -d /etc/iptables ]]; then
@@ -223,7 +265,7 @@ _abuse_is_active() {
   if have_cmd nft && nft list table inet securebox >/dev/null 2>&1; then
     return 0
   fi
-  if have_cmd iptables && iptables -L SECUREBOX_ABUSE -n >/dev/null 2>&1; then
+  if have_cmd iptables && iptables -L PGCTB_ABUSE -n >/dev/null 2>&1; then
     return 0
   fi
   return 1
@@ -235,7 +277,7 @@ _abuse_repair_outbound() {
     nft flush chain inet securebox output 2>/dev/null || true
   fi
   if have_cmd iptables; then
-    iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -D OUTPUT -j PGCTB_ABUSE 2>/dev/null || true
   fi
 }
 
@@ -247,25 +289,25 @@ module_abuse() {
   # STRICT: never block unless user explicitly said yes
   if ! require_answer_yes block_abuse abuse "user did not enable abuse IP blocking"; then
     if _abuse_is_active; then
-      ui_warn "Abuse blocking answered NO, but previous MrClock abuse rules are still active."
+      ui_warn "Abuse blocking answered NO, but previous PGClockTB abuse rules are still active."
       local remove=no
       if have_tty; then
-        if ui_confirm "Remove previously enabled MrClock abuse rules?" "N"; then
+        if ui_confirm "Remove previously enabled PGClockTB abuse rules?" "N"; then
           remove=yes
         fi
       else
         ui_info "Non-interactive: leaving existing abuse rules in place (will not delete without ask)."
       fi
       if [[ "$remove" == "yes" ]]; then
-        ui_info "Removing previous MrClock abuse rules..."
+        ui_info "Removing previous PGClockTB abuse rules..."
         _abuse_remove_all
       else
         ui_info "Keeping existing abuse rules."
       fi
     else
-      ui_info "Abuse blocking disabled — no active MrClock abuse rules."
+      ui_info "Abuse blocking disabled — no active PGClockTB abuse rules."
     fi
-    module_skip "abuse" "block_abuse!=yes (answer='${SECUREBOX_ANSWERS[block_abuse]:-}')"
+    module_skip "abuse" "block_abuse!=yes (answer='${PGCTB_ANSWERS[block_abuse]:-}')"
     return 0
   fi
 
@@ -284,8 +326,13 @@ module_abuse() {
     return 0
   fi
 
-  local profile="${SECUREBOX_ANSWERS[abuse_profile]:-minimal}"
+  local profile="${PGCTB_ANSWERS[abuse_profile]:-minimal}"
   ui_info "Loaded ${#CIDRS[@]} CIDR ranges from $(basename "$file") [profile=${profile}]"
+  if ! _abuse_protect_admin; then
+    module_fail "abuse" "refused: admin IP unknown and no TTY to confirm"
+    confirm_continue_on_error "abuse" "admin IP unknown" || return 1
+    return 0
+  fi
   _abuse_harden_services
 
   if ! _abuse_ensure_nft_or_iptables; then

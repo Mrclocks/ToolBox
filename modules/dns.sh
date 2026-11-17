@@ -198,12 +198,19 @@ dns_preset_labels_with_bench() {
 }
 
 dns_resolve_choice() {
-  # Sets DNS_PRIMARY DNS_SECONDARY DNS_CHOICE_ID from SECUREBOX_ANSWERS
-  local idx="${SECUREBOX_ANSWERS[dns_choice]:-}"
+  # Sets DNS_PRIMARY DNS_SECONDARY DNS_CHOICE_ID from PGCTB_ANSWERS
+  local idx="${PGCTB_ANSWERS[dns_choice]:-}"
   if [[ -z "$idx" ]]; then
-    DNS_CHOICE_ID="${SECUREBOX_ANSWERS[dns_id]:-}"
-    DNS_PRIMARY="${SECUREBOX_ANSWERS[dns_primary]:-}"
-    DNS_SECONDARY="${SECUREBOX_ANSWERS[dns_secondary]:-}"
+    DNS_CHOICE_ID="${PGCTB_ANSWERS[dns_id]:-}"
+    DNS_PRIMARY="${PGCTB_ANSWERS[dns_primary]:-}"
+    DNS_SECONDARY="${PGCTB_ANSWERS[dns_secondary]:-}"
+    return 0
+  fi
+  if ! is_uint "$idx" || (( idx < 1 || idx > ${#DNS_PRESETS[@]} )); then
+    # Never let a non-numeric/out-of-range index pick a preset by accident
+    DNS_CHOICE_ID="keep"
+    DNS_PRIMARY=""
+    DNS_SECONDARY=""
     return 0
   fi
   local p="${DNS_PRESETS[$((idx - 1))]}"
@@ -211,9 +218,9 @@ dns_resolve_choice() {
   IFS='|' read -r id label primary secondary <<<"$p"
   DNS_CHOICE_ID="$id"
 
-  if [[ -n "${SECUREBOX_ANSWERS[dns_primary]:-}" && "$id" != "keep" ]]; then
-    DNS_PRIMARY="${SECUREBOX_ANSWERS[dns_primary]}"
-    DNS_SECONDARY="${SECUREBOX_ANSWERS[dns_secondary]:-}"
+  if [[ -n "${PGCTB_ANSWERS[dns_primary]:-}" && "$id" != "keep" ]]; then
+    DNS_PRIMARY="${PGCTB_ANSWERS[dns_primary]}"
+    DNS_SECONDARY="${PGCTB_ANSWERS[dns_secondary]:-}"
     return 0
   fi
 
@@ -223,14 +230,14 @@ dns_resolve_choice() {
       DNS_SECONDARY="${DNS_CURRENT[1]:-}"
       ;;
     custom)
-      DNS_PRIMARY="${SECUREBOX_ANSWERS[dns_primary]}"
-      DNS_SECONDARY="${SECUREBOX_ANSWERS[dns_secondary]:-}"
+      DNS_PRIMARY="${PGCTB_ANSWERS[dns_primary]}"
+      DNS_SECONDARY="${PGCTB_ANSWERS[dns_secondary]:-}"
       ;;
     *)
       DNS_PRIMARY="$primary"
       DNS_SECONDARY="$secondary"
-      SECUREBOX_ANSWERS[dns_primary]="$primary"
-      SECUREBOX_ANSWERS[dns_secondary]="$secondary"
+      PGCTB_ANSWERS[dns_primary]="$primary"
+      PGCTB_ANSWERS[dns_secondary]="$secondary"
       ;;
   esac
 }
@@ -239,7 +246,7 @@ module_dns() {
   ui_step "Configure DNS"
   detect_dns_manager
 
-  if [[ -z "${SECUREBOX_ANSWERS[dns_choice]:-}" && -z "${SECUREBOX_ANSWERS[dns_id]:-}" ]]; then
+  if [[ -z "${PGCTB_ANSWERS[dns_choice]:-}" && -z "${PGCTB_ANSWERS[dns_id]:-}" ]]; then
     module_skip "dns" "no DNS choice from user"
     return 0
   fi
@@ -273,7 +280,7 @@ module_dns() {
   fi
 
   if apply_dns_servers "$DNS_PRIMARY" "$DNS_SECONDARY"; then
-    local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+    local rollback_secs="${PGCTB_ROLLBACK_SECONDS:-120}"
     if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
       if declare -F schedule_timed_rollback >/dev/null 2>&1; then
         schedule_timed_rollback "dns" "$rollback_secs" || true

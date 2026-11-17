@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SecureBox — network path detection + SAFE apply helpers
+# PGClockTB — network path detection + SAFE apply helpers
 # CRITICAL RULE: never write configs that redefine an interface's addressing
 # (DHCP/static/gateway). MTU/DNS persistence must not steal the NIC.
 # shellcheck shell=bash
@@ -99,7 +99,7 @@ _networkd_soft_reload() {
   systemctl reload systemd-networkd >/dev/null 2>&1 || true
 }
 
-# Remove ANY MrClock artifacts that can steal addressing / break gateway
+# Remove ANY PGClockTB artifacts that can steal addressing / break gateway
 heal_network_safety() {
   local f changed=0
 
@@ -151,7 +151,7 @@ _mtu_write_link_file() {
   mac="$(_mtu_iface_mac "$iface")"
   backup_file "$linkfile"
   {
-    echo "# Managed by MrClock ${SECUREBOX_VERSION}"
+    echo "# Managed by PGClockTB ${PGCTB_VERSION}"
     echo "# SAFE: .link sets MTU only — does NOT touch IP / DHCP / gateway"
     echo "[Match]"
     if [[ -n "$mac" && "$mac" != "00:00:00:00:00:00" ]]; then
@@ -240,7 +240,7 @@ apply_persistent_mtu() {
 
 # Snapshot helpers for DNS rollback
 _dns_snapshot_dir() {
-  printf '%s\n' "${SECUREBOX_STATE_DIR}/dns-snap-${SECUREBOX_RUN_ID}"
+  printf '%s\n' "${PGCTB_STATE_DIR}/dns-snap-${PGCTB_RUN_ID}"
 }
 
 _dns_snapshot_save() {
@@ -336,7 +336,7 @@ apply_dns_servers() {
       local conf="/etc/systemd/resolved.conf.d/99-securebox-dns.conf"
       backup_file "$conf"
       {
-        echo "# Managed by MrClock ${SECUREBOX_VERSION}"
+        echo "# Managed by PGClockTB ${PGCTB_VERSION}"
         echo "[Resolve]"
         echo "DNS=${servers[*]}"
         # Keep public fallbacks — empty FallbackDNS + Domains=~. can blackhole resolution
@@ -379,7 +379,7 @@ apply_dns_servers() {
         local conf="/etc/systemd/resolved.conf.d/99-securebox-dns.conf"
         backup_file "$conf"
         {
-          echo "# Managed by MrClock ${SECUREBOX_VERSION}"
+          echo "# Managed by PGClockTB ${PGCTB_VERSION}"
           echo "[Resolve]"
           echo "DNS=${servers[*]}"
           echo "FallbackDNS=1.0.0.1 8.8.8.8"
@@ -388,7 +388,7 @@ apply_dns_servers() {
       else
         backup_file /etc/resolv.conf
         {
-          echo "# Managed by MrClock ${SECUREBOX_VERSION}"
+          echo "# Managed by PGClockTB ${PGCTB_VERSION}"
           for s in "${servers[@]}"; do
             echo "nameserver $s"
           done

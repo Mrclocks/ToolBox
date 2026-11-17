@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Container / local scenario smoke tests for v0.2.0 acceptance criteria.
-# Run as root inside Ubuntu 24.04 (or similar) with the repo mounted at /src.
+# Real-system scenario tests (root): applies and reverts real changes.
+# Runs in CI on an ephemeral GitHub runner VM (real systemd), or by hand as
+# root on a throwaway Ubuntu/Debian VM:  sudo bash scripts/scenario-smoke.sh "$PWD"
 set -euo pipefail
 
 SRC="${1:-/src}"
@@ -36,7 +37,7 @@ before_hash="$( (for f in "${etc_sample[@]}"; do stat -c '%n %Y %s' "$f" 2>/dev/
 touch "/tmp/dryrun-marker-$stamp"
 sleep 1
 
-SECUREBOX_DRY_RUN=1 bash install.sh --dry-run --one-click --ufw --ufw-ports "443 51820/udp" --fail2ban --block-abuse --disable-ipv6 --ssh-port 2222 </dev/null || true
+PGCTB_DRY_RUN=1 bash install.sh --dry-run --one-click --ufw --ufw-ports "443 51820/udp" --fail2ban --block-abuse --disable-ipv6 --ssh-port 2222 </dev/null || true
 
 after_hash="$( (for f in "${etc_sample[@]}"; do stat -c '%n %Y %s' "$f" 2>/dev/null; done) | sha256sum | awk '{print $1}' )"
 new_files="$(find /etc -type f -newer "/tmp/dryrun-marker-$stamp" 2>/dev/null | head -n 20 || true)"
@@ -57,8 +58,10 @@ source lib/common.sh
 # shellcheck disable=SC1091
 source lib/ui.sh
 # shellcheck disable=SC1091
+source lib/safety.sh
+# shellcheck disable=SC1091
 source modules/ufw.sh
-declare -gA SECUREBOX_ANSWERS=([ufw_enable]=yes [ssh_current_port]=22 [ssh_port]=22 [ufw_ports]="443" [ufw_reset]=no [ufw_auto_discover]=no)
+declare -gA PGCTB_ANSWERS=([ufw_enable]=yes [ssh_current_port]=22 [ssh_port]=22 [ufw_ports]="443" [ufw_reset]=no [ufw_auto_discover]=no)
 # Simulate: after allowing rules, show added must contain SSH even when inactive
 ufw allow 22/tcp comment 'test' >/dev/null 2>&1 || true
 UFW_SSH_PORTS=(22)
@@ -83,7 +86,7 @@ PasswordAuthentication yes
 EOF
 # shellcheck disable=SC1091
 source modules/ssh.sh
-declare -gA SECUREBOX_ANSWERS=([do_ssh]=yes [ssh_port]=22 [ssh_password_auth]=no [ssh_permit_root]=keep [ssh_max_auth_tries]=5 [ssh_wait_confirm]=no)
+declare -gA PGCTB_ANSWERS=([do_ssh]=yes [ssh_port]=22 [ssh_password_auth]=no [ssh_permit_root]=keep [ssh_max_auth_tries]=5 [ssh_wait_confirm]=no)
 # Create a usable key for root so disable is allowed
 mkdir -p /root/.ssh
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyForMrClockUnitSmoke test@host\n' >/root/.ssh/authorized_keys
@@ -123,16 +126,16 @@ echo "=== 6) IPv6 SSH session refuses disable ==="
 source modules/ipv6.sh
 export SSH_CONNECTION="2001:db8::1 50000 2001:db8::2 22"
 check "detect IPv6 SSH session" '_ipv6_ssh_session_is_v6'
-SECUREBOX_DRY_RUN=0
-SECUREBOX_FAILED_MODULES=()
-declare -gA SECUREBOX_ANSWERS=([disable_ipv6]=yes [continue_on_error]=yes)
+PGCTB_DRY_RUN=0
+PGCTB_FAILED_MODULES=()
+declare -gA PGCTB_ANSWERS=([disable_ipv6]=yes [continue_on_error]=yes)
 # Non-interactive refuse path (no TTY → refuse without applying)
 set +e
 module_ipv6
 set -e
 v6="$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)"
 check "IPv6 disable refused over IPv6 SSH (sysctl still on)" '[[ "$v6" != "1" ]]'
-check "ipv6 module recorded failure/skip" '[[ "${SECUREBOX_FAILED_MODULES[*]:-}" == *ipv6* ]]'
+check "ipv6 module recorded failure/skip" '[[ "${PGCTB_FAILED_MODULES[*]:-}" == *ipv6* ]]'
 unset SSH_CONNECTION
 
 echo "=== 7) Abuse established/related allows reply path ==="
@@ -141,13 +144,23 @@ source modules/abuse.sh
 # Apply a tiny set containing a public DNS we can query through
 tmp_ranges="$(mktemp)"
 echo "1.1.1.1/32" >"$tmp_ranges"
-SECUREBOX_ANSWERS[block_abuse]=yes
-SECUREBOX_ANSWERS[abuse_profile]=minimal
-SECUREBOX_ANSWERS[abuse_file]="$tmp_ranges"
-SECUREBOX_DRY_RUN=0
+PGCTB_ANSWERS[block_abuse]=yes
+PGCTB_ANSWERS[abuse_profile]=minimal
+PGCTB_ANSWERS[abuse_file]="$tmp_ranges"
+PGCTB_DRY_RUN=0
+# Admin IP inside the blocked set must stay reachable (explicit allow first)
+echo "203.0.113.0/24" >>"$tmp_ranges"
+export PGCTB_ADMIN_IPS="203.0.113.9"
 # Clear prior
 _abuse_remove_all 2>/dev/null || true
 module_abuse || true
+if command -v nft >/dev/null && nft list chain inet securebox input >/dev/null 2>&1; then
+  rules="$(nft list chain inet securebox input)"
+  a_line="$(grep -n 'ip saddr 203.0.113.9 accept' <<<"$rules" | cut -d: -f1 || true)"
+  d_line="$(grep -n 'ip saddr @abuse4 drop' <<<"$rules" | cut -d: -f1 || true)"
+  check "admin IP allow rule precedes abuse drop" '[[ -n "$a_line" && -n "$d_line" && "$a_line" -lt "$d_line" ]]'
+fi
+unset PGCTB_ADMIN_IPS
 # Outbound dig to 1.1.1.1 must still get answers (established/related)
 if dig +time=3 +tries=1 @1.1.1.1 example.com A +short >/dev/null 2>&1; then
   echo "PASS: outbound to blocked-range IP still gets replies (established/related)"
@@ -157,7 +170,7 @@ else
   if nft list chain inet securebox input 2>/dev/null | grep -qi 'established,related'; then
     echo "PASS: nft has established,related accept (dig blocked by environment)"
     pass=$((pass + 1))
-  elif iptables -L SECUREBOX_ABUSE -n -v 2>/dev/null | grep -qiE 'RELATED|ESTABLISHED'; then
+  elif iptables -L PGCTB_ABUSE -n -v 2>/dev/null | grep -qiE 'RELATED|ESTABLISHED'; then
     echo "PASS: iptables has ESTABLISHED,RELATED accept"
     pass=$((pass + 1))
   else
@@ -184,8 +197,8 @@ state_record_once "ufw_was_enabled" "no"
 # Mess with live values
 ip link set dev "$iface" mtu 1280 2>/dev/null || true
 sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
-mkdir -p "${SECUREBOX_STATE_DIR}/sysctl"
-echo 0 >"${SECUREBOX_STATE_DIR}/sysctl/net.ipv4.ip_forward"
+mkdir -p "${PGCTB_STATE_DIR}/sysctl"
+echo 0 >"${PGCTB_STATE_DIR}/sysctl/net.ipv4.ip_forward"
 ufw --force enable >/dev/null 2>&1 || true
 # shellcheck disable=SC1091
 source modules/restore.sh
@@ -196,6 +209,21 @@ ufw_st="$(ufw status 2>/dev/null | head -n1 || true)"
 check "restore live MTU" '[[ "$now_mtu" == "$old_mtu" ]]'
 check "restore live sysctl ip_forward" '[[ "$fwd" == "0" ]]'
 check "restore disables UFW when previously off" '[[ "$ufw_st" == *inactive* ]]'
+
+echo "=== 10) Single-run lock refuses a concurrent run ==="
+lock_out="$(mktemp)"
+( flock -x 9; sleep 30 ) 9>>/run/pgclocktb.lock &
+holder=$!
+sleep 1
+set +e
+timeout 90 bash install.sh optimize low </dev/null >"$lock_out" 2>&1
+lock_rc=$?
+set -e
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+check "second run refused while another holds the lock" \
+  '[[ $lock_rc -ne 0 ]] && grep -q "Another PGClockTB run" "$lock_out"'
+rm -f "$lock_out"
 
 echo
 echo "RESULT: pass=$pass fail=$fail"

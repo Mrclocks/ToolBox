@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SecureBox — OS detection
+# PGClockTB — OS detection
 # shellcheck shell=bash
 
 OS_ID=""

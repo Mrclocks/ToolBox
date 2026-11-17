@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MrClock / SecureBox — terminal UI
+# PGClockTB — terminal UI
 # shellcheck shell=bash
 
 # Colors (safe when not a TTY) — orange theme
@@ -64,12 +64,12 @@ ui_banner() {
 
   cat <<EOF
 ${C_ORANGE}${C_BOLD}
-   __  __       ____ _            _
-  |  \/  |_ __ / ___| | ___   ___| | __
-  | |\/| | '__| |   | |/ _ \ / __| |/ /
-  | |  | | |  | |___| | (_) | (__|   <
-  |_|  |_|_|   \____|_|\___/ \___|_|\_\\
-${C_RESET}${C_DIM}   VPN Hardening & Optimization Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
+  ____   ____  ____ _            _    _____ ____
+ |  _ \\ / ___|/ ___| | ___   ___| | _|_   _| __ )
+ | |_) | |  _| |   | |/ _ \\ / __| |/ / | | |  _ \\
+ |  __/| |_| | |___| | (_) | (__|   <  | | | |_) |
+ |_|    \\____|\\____|_|\\___/ \\___|_|\\_\\ |_| |____/
+${C_RESET}${C_DIM}   PasarGuard Toolbox  ·  v${PGCTB_VERSION}${C_RESET}
 EOF
   ui_line 64
   ui_server_status_panel
@@ -131,18 +131,48 @@ ui_kv() {
 }
 
 ui_read() {
-  # Read a line from the real terminal when stdin is a pipe (curl|bash).
+  # Always prefer /dev/tty so line editing works after clear / under sudo / curl|bash.
+  # Use bash readline (-e) when available so Backspace/Clear/retype behave correctly.
   local __dest="$1"
   local __line=""
-  if [[ -t 0 ]]; then
-    read -r __line || __line=""
-  elif { exec 3</dev/tty; } 2>/dev/null; then
-    read -r __line <&3 || __line=""
-    exec 3<&-
+  # Heal terminal state (garbled echo after some clears / remote clients)
+  if [[ -e /dev/tty ]]; then
+    stty sane </dev/tty 2>/dev/null || true
+  fi
+
+  local __fd=""
+  # Dynamic fd: never clobber a descriptor the caller may be using (e.g. 3)
+  if [[ -e /dev/tty ]] && { exec {__fd}<>/dev/tty; } 2>/dev/null; then
+    # -e: readline editing; -r: raw backslashes; strip CR afterwards
+    if ! IFS= read -r -e -u "$__fd" __line 2>/dev/null; then
+      # Fallback without -e (busybox / restricted bash)
+      IFS= read -r -u "$__fd" __line || __line=""
+    fi
+    exec {__fd}>&- 2>/dev/null || true
+  elif [[ -t 0 ]]; then
+    if ! IFS= read -r -e __line 2>/dev/null; then
+      IFS= read -r __line || __line=""
+    fi
   else
-    # Non-interactive / no TTY — leave empty so callers use defaults
     __line=""
   fi
+  # Drop CR from CRLF / some SSH clients
+  __line="${__line//$'\r'/}"
+  printf -v "$__dest" '%s' "$__line"
+}
+
+ui_read_secret() {
+  # ui_read_secret VAR PROMPT — no echo, never logged
+  local __dest="$1" __line="" __fd=""
+  printf '%s: ' "$2"
+  if [[ -e /dev/tty ]] && { exec {__fd}<>/dev/tty; } 2>/dev/null; then
+    IFS= read -r -s -u "$__fd" __line || __line=""
+    exec {__fd}>&- 2>/dev/null || true
+  elif [[ -t 0 ]]; then
+    IFS= read -r -s __line || __line=""
+  fi
+  printf '\n'
+  __line="${__line//$'\r'/}"
   printf -v "$__dest" '%s' "$__line"
 }
 
@@ -179,12 +209,13 @@ ui_confirm() {
 
 ui_ask() {
   # ui_ask VAR prompt [default]
+  # Empty Enter keeps default. Typing replaces the whole value (no sticky junk).
   local __var="$1"
   local __prompt="$2"
   local __default="${3-}"
   local __ans
   if [[ -n "$__default" ]]; then
-    printf '%s?%s %s [%s]: ' "$C_ORANGE" "$C_RESET" "$__prompt" "$__default"
+    printf '%s?%s %s %s[%s]%s: ' "$C_ORANGE" "$C_RESET" "$__prompt" "$C_DIM" "$__default" "$C_RESET"
   else
     printf '%s?%s %s: ' "$C_ORANGE" "$C_RESET" "$__prompt"
   fi
@@ -226,30 +257,47 @@ ui_ask_mtu() {
   done
 }
 
+ui_menu_title() {
+  local __title="$1"
+  echo
+  printf '%s%s%s\n' "$C_BOLD$C_ORANGE" "$__title" "$C_RESET"
+  ui_line 56 '-'
+}
+
+ui_menu_back_line() {
+  printf '  %s 0)%s Back\n' "$C_YELLOW" "$C_RESET"
+  ui_line 56 '-'
+}
+
 ui_menu() {
   # ui_menu result_var title item1 item2 ...
+  # Always offers 0) Back — sets result to 0 and returns 1 (cancelled).
   # IMPORTANT: do not name locals the same as result_var (printf -v would set local only).
   local __var="$1"
   local __title="$2"
   shift 2
   local -a __items=("$@")
   local __i __sel
-  echo
-  printf '%s%s%s\n' "$C_BOLD$C_ORANGE" "$__title" "$C_RESET"
-  ui_line 56 '-'
+  ui_menu_title "$__title"
   for __i in "${!__items[@]}"; do
     printf '  %s%2d)%s %s\n' "$C_ORANGE" "$((__i + 1))" "$C_RESET" "${__items[$__i]}"
   done
-  ui_line 56 '-'
+  ui_menu_back_line
   while true; do
-    printf '%sSelect%s [1-%d]: ' "$C_ORANGE" "$C_RESET" "${#__items[@]}"
+    printf '%sSelect%s [0-%d]: ' "$C_ORANGE" "$C_RESET" "${#__items[@]}"
     ui_read __sel
-    __sel="$(trim "$__sel")"
+    __sel="$(trim "${__sel:-}")"
+    case "$__sel" in
+      0|b|B|back|Back)
+        printf -v "$__var" '%s' "0"
+        return 1
+        ;;
+    esac
     if is_uint "$__sel" && (( __sel >= 1 && __sel <= ${#__items[@]} )); then
       printf -v "$__var" '%s' "$__sel"
       return 0
     fi
-    ui_warn "Enter a number between 1 and ${#__items[@]}."
+    ui_warn "Enter a number between 0 and ${#__items[@]} (0 = Back)."
   done
 }
 

@@ -1,6 +1,9 @@
-# MrClock ToolBox
+# PGClockTB
 
-VPN hardening & optimization for **Ubuntu 22–26** and **Debian 12–13**.
+PasarGuard ops toolbox for **Ubuntu 22–26** and **Debian 12–13**:
+hardening, SSL, reverse proxy, and PGClockMG backup/restore bridges.
+
+Ops details: [docs/OPS.md](docs/OPS.md).
 
 ## Install
 
@@ -11,63 +14,78 @@ curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.
 Then:
 
 ```bash
-sudo mrclock
+sudo pgclock
 ```
 
-## CLI (all flags)
+### Upgrading from MrClock ToolBox (< 0.4.0)
 
-```text
-Modes:
-  (default)              Interactive menu
-  --one-click            Non-interactive Apply All with safe defaults
-  --dry-run              Plan only — show what would change, do not apply
-  --verify               Run the verify module and exit
-  --help, -h             Show this help
+Nothing to do by hand — the first run of 0.4.0 migrates automatically:
 
-SSH / network:
-  --ssh-port <port>      SSH port (1–65535) for --one-click
-  --mtu <value>          MTU (1280–9000) or 'keep'
-  --dns <id>             cloudflare|google|quad9|opendns|adguard|keep
-  --disable-ipv6         Disable IPv6 in --one-click
+| Before | After | Old path becomes |
+|---|---|---|
+| `mrclock` | `pgclock` | alias (still works) |
+| `/opt/mrclock-toolbox` | `/opt/pgclocktb` | symlink |
+| `/var/lib/securebox` | `/var/lib/pgclocktb` | symlink |
+| `/var/log/securebox` | `/var/log/pgclocktb` | symlink |
+| `/var/backups/securebox` | `/var/backups/pgclocktb` | symlink |
+| `SECUREBOX_*` env vars | `PGCTB_*` | still accepted |
 
-UFW:
-  --ufw                  Enable UFW in --one-click
-  --no-ufw               Do not enable UFW (default for one-click)
-  --ufw-ports <list>     Extra allows, e.g. "443 51820/udp 1000:2000/tcp"
-  --ufw-discover         Auto-allow discovered public listeners
-  --ufw-reset            Reset UFW rules before applying (dangerous for NAT)
+Symlinks keep existing acme.sh renew hooks, cron entries and armed rollbacks
+working. Files that older versions wrote under `/etc` (for example
+`sshd_config.d/00-securebox.conf`, `99-securebox-*.conf`, nft table
+`securebox`) keep their names on purpose — renaming live SSH/network drop-ins
+is not worth the risk, and Undo still finds them.
 
-Abuse / extras:
-  --block-abuse          Enable abuse CIDR blocking (minimal profile)
-  --no-abuse-block       Skip abuse CIDR blocking (default)
-  --abuse-profile <p>    minimal|aggressive (with --block-abuse)
-  --fail2ban             Enable Fail2Ban
-  --unattended           Enable unattended-upgrades
-
-Safety:
-  --rollback-seconds N   Arm timed auto-rollback for SSH/UFW/DNS/MTU (default 120)
-  --no-rollback          Disable timed auto-rollback
-```
-
-Examples:
+## Commands
 
 ```bash
-sudo mrclock --help
-sudo mrclock --one-click --ufw --ufw-ports "443 51820/udp" --ufw-discover --fail2ban
-sudo mrclock --dry-run --one-click
-sudo mrclock --verify
+sudo pgclock                      # interactive menu
+sudo pgclock status               # status report + verify
+sudo pgclock doctor [--share]     # health check PASS/WARN/FAIL (--share masks IPs/domains)
+sudo pgclock portcheck HOST "443 80"   # TCP test of HOST from this server
+sudo pgclock alerts test|check|status  # Telegram alerts
+sudo pgclock update [--check|rollback] # verified self-update (previous kept)
+sudo pgclock --version
+sudo pgclock optimize low --yes   # 🟢 Safe level   (no prompts)
+sudo pgclock optimize mid         # 🟡 Balanced level (asks each network change)
+sudo pgclock ssl status|renew|repair
+sudo pgclock proxy status
+sudo pgclock --help               # all flags (legacy --one-click etc.)
 ```
 
-## Features
+## Menu
 
-- Apply All: **Automatic (low-risk)** or **Customize** — Plan screen + preflight first
-- DNS (live dig benchmark), MTU (default keep / MSS clamp), BBR
-- UFW autopilot, SSH hardening (`00-securebox.conf`), Fail2Ban
-- Optional abuse CIDR block (minimal / aggressive profiles)
-- Optional IPv6 disable (refuses if your SSH session is IPv6)
-- Restore previous configs + live MTU/sysctl/services/UFW state
-- Verify module: `sshd -T`, `ss`, `resolvectl`, `ufw`, `tc`, sysctl
-- Timed auto-rollback for SSH/UFW/DNS/MTU unless you confirm
+1. **Status & Doctor** — health check, shareable report, external port check
+2. **SSL Certificates** — PasarGuard Panel/Node issue + auto-renew (acme.sh)
+3. **Reverse Proxy** — HAProxy single-port (panel/node)
+4. **Optimization** 🟢 / 🟡 — levels + individual items
+5. **Security** 🔴 SSH · UFW · abuse block, 🟡 Fail2Ban — one at a time
+6. **Backup & Restore** — PGClockBackup / PGClockMG
+7. **Tools** — Undo PGClockTB changes, Telegram alerts, self-update, full custom wizard
+
+## Risk levels
+
+| Level | Items | Notes |
+|---|---|---|
+| 🟢 **Safe** (low) | update (`apt-get upgrade`, Docker held), time sync, BBR, rotated/journal log cleanup, unattended security upgrades (no auto-reboot) | no connectivity risk |
+| 🟡 **Balanced** (mid) | Safe + Fail2Ban; DNS, MTU, IPv6, unused services asked one by one | network items keep current without a TTY |
+| 🔴 **High** | SSH port/hardening, UFW, abuse IP block | never in a level; Security menu only, warning screen + typed `YES` |
+
+Docker is held during upgrades by default: upgrading it restarts every
+container (PasarGuard panel/node → users disconnected).
+
+Every change goes through the safety core (lock, admin-IP guard,
+verify-or-revert, timed rollback) — see [docs/OPS.md](docs/OPS.md#safety-core).
+
+SSL details:
+
+- Auto-detect Panel vs Node paths; multi-domain SAN
+- Preflight: DNS hint + port 80 check
+- Deploys to `/var/lib/pasarguard/certs/` and/or `/var/lib/pg-node/certs/`
+- Auto-writes Panel/Node `.env` certificate paths (and restarts compose)
+- Auto-renew via acme.sh cron + deploy hook (Repair menu if cron missing)
+
+Reverse proxy / backup: see [docs/OPS.md](docs/OPS.md).
 
 Rule #1: never lock out the admin or cut connectivity.
 
@@ -76,10 +94,10 @@ Rule #1: never lock out the admin or cut connectivity.
 - After changing the SSH port, open a **new** terminal before closing the current session.
 - Automatic never enables abuse block or UFW without asking; keeps DNS/MTU by default.
 - Prefer preserving SSH env under sudo (otherwise IPv6/admin-IP detection recover via `/proc`):
-  `sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY mrclock`
+  `sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY pgclock`
 - Timed rollback arms only on a TTY (never auto-reverts headless `--one-click`).
 - Release integrity is **fail-closed**: missing `SHA256SUMS` aborts unless
-  `SECUREBOX_ALLOW_INSECURE=1`. See [docs/RELEASE.md](docs/RELEASE.md).
+  `PGCTB_ALLOW_INSECURE=1`. See [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Dev / CI
 

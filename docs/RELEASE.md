@@ -1,28 +1,43 @@
-# Release integrity
+# Release integrity & self-update
 
 `SHA256SUMS` inside a git tree or source zip **does not prove authenticity** — an
-attacker who swaps the archive can swap the checksums too.
+attacker who swaps the archive can swap the checksums too. Trust comes from
+(1) `SHA256SUMS` published as a **separate release asset** and (2) a signature by
+the **release key pinned inside `install.sh`**.
 
-## Required publish steps
+## One-time: create and pin the release key (maintainer)
 
-For each GitHub Release tag:
+```bash
+gpg --quick-gen-key "PGClockTB release <you@example.com>" ed25519 sign 3y
+gpg --list-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}'   # fingerprint
+./scripts/pin-release-key.sh <FINGERPRINT>
+git commit -am "chore: pin release signing key"
+```
 
-1. `./scripts/gen-checksums.sh` (optionally `RELEASE_TAG=0.2.2`)
-   — tarball **must** contain `ToolBox-<tag>/lib/...` (not a flat root)
-2. Sign: `cd dist && gpg --detach-sign -a -o SHA256SUMS.asc SHA256SUMS`
-3. Upload as **separate Release assets**:
-   - `install.sh`
-   - `ToolBox-<tag>.tar.gz`
-   - `SHA256SUMS`
-   - `SHA256SUMS.asc`
+Keep the **private** key offline / backed up; only the public key is embedded.
+Until a key is pinned, installs and updates are verified by checksum only and
+say so (`PGCTB_REQUIRE_SIGNATURE=1` makes that an error).
 
-`install.sh` downloads `SHA256SUMS` (+ `.asc`) from
-`/releases/download/<tag>/…` **before** trusting the archive.
+## Every release
 
-## Fail-closed policy
+1. Set `VERSION`, update `CHANGELOG.md`, tag `v<version>`.
+2. `./scripts/gen-checksums.sh` (optionally `RELEASE_TAG=v1.0.0`)
+   — the tarball **must** contain `PGClockTB-<tag>/lib/...` (not a flat root).
+3. Sign: `cd dist && gpg --detach-sign -a -o SHA256SUMS.asc SHA256SUMS`
+4. Upload as **separate Release assets**:
+   `install.sh`, `PGClockTB-<tag>.tar.gz`, `SHA256SUMS`, `SHA256SUMS.asc`.
 
-- Missing `SHA256SUMS` → **error** (refuses install) unless `SECUREBOX_ALLOW_INSECURE=1`
-- Present `SHA256SUMS.asc` → must verify with `gpg` (or allow insecure)
-- Optional pin: `SECUREBOX_GPG_FINGERPRINT=<40-char fingerprint>` requires a matching `.asc`
+## What the installer and `pgclock update` check
+
+- `SHA256SUMS` missing → **refuse** (unless `PGCTB_ALLOW_INSECURE=1`).
+- Archive hash must match its `SHA256SUMS` entry.
+- Key pinned → `SHA256SUMS.asc` must exist and be a good signature **by that
+  key**, verified in a throwaway GnuPG home (keys in root's keyring are never
+  trusted). `PGCTB_GPG_FINGERPRINT=<fpr>` overrides the pinned fingerprint.
+- `pgclock update` additionally requires the tree's `VERSION` to match the tag,
+  runs `bash -n` on every script, installs atomically (`/opt/pgclocktb.new` →
+  swap, old tree kept as `/opt/pgclocktb.prev`), smoke-tests the new version
+  and rolls back automatically if it cannot start.
+- `pgclock update rollback` restores the previous version at any time.
 
 Do **not** commit `SHA256SUMS` into the repository as the trust root.

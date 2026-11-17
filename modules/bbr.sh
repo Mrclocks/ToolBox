@@ -48,7 +48,7 @@ _bbr_write_sysctl_filtered() {
 module_bbr() {
   ui_step "Enable BBR + low-latency network tuning"
   if ! require_answer_yes do_bbr bbr "BBR tuning not explicitly enabled"; then
-    module_skip "bbr" "do_bbr='${SECUREBOX_ANSWERS[do_bbr]:-}'"
+    module_skip "bbr" "do_bbr='${PGCTB_ANSWERS[do_bbr]:-}'"
     return 0
   fi
 

@@ -1,44 +1,52 @@
 #!/usr/bin/env bash
-# SecureBox — shared helpers
+# PGClockTB — shared helpers
 # shellcheck shell=bash
 
 set -o pipefail
 
-SECUREBOX_NAME="MrClock"
-SECUREBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [[ -r "${SECUREBOX_ROOT}/VERSION" ]]; then
-  SECUREBOX_VERSION="$(tr -d '[:space:]' <"${SECUREBOX_ROOT}/VERSION")"
+# Accept pre-0.4.0 overrides (SECUREBOX_DRY_RUN=1 …) as PGCTB_* equivalents.
+for __pgctb_v in $(compgen -e); do
+  [[ "$__pgctb_v" == SECUREBOX_* ]] || continue
+  __pgctb_n="PGCTB_${__pgctb_v#SECUREBOX_}"
+  [[ -n "${!__pgctb_n+x}" ]] || export "${__pgctb_n}=${!__pgctb_v}"
+done
+unset __pgctb_v __pgctb_n
+
+PGCTB_NAME="PGClockTB"
+PGCTB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -r "${PGCTB_ROOT}/VERSION" ]]; then
+  PGCTB_VERSION="$(tr -d '[:space:]' <"${PGCTB_ROOT}/VERSION")"
 fi
-SECUREBOX_VERSION="${SECUREBOX_VERSION:-0.2.0}"
-SECUREBOX_DATA="${SECUREBOX_ROOT}/data"
-SECUREBOX_BACKUP_ROOT="${SECUREBOX_BACKUP_ROOT:-/var/backups/securebox}"
-SECUREBOX_LOG_DIR="${SECUREBOX_LOG_DIR:-/var/log/securebox}"
-SECUREBOX_STATE_DIR="${SECUREBOX_STATE_DIR:-/var/lib/securebox}"
-SECUREBOX_RUN_ID="$(date +%Y%m%d-%H%M%S)"
-SECUREBOX_LOG="${SECUREBOX_LOG_DIR}/run-${SECUREBOX_RUN_ID}.log"
-SECUREBOX_FAILED_MODULES=()
-SECUREBOX_OK_MODULES=()
-SECUREBOX_SKIPPED_MODULES=()
-SECUREBOX_APT_UPDATED=0
+PGCTB_VERSION="${PGCTB_VERSION:-0.2.0}"
+PGCTB_DATA="${PGCTB_ROOT}/data"
+PGCTB_BACKUP_ROOT="${PGCTB_BACKUP_ROOT:-/var/backups/pgclocktb}"
+PGCTB_LOG_DIR="${PGCTB_LOG_DIR:-/var/log/pgclocktb}"
+PGCTB_STATE_DIR="${PGCTB_STATE_DIR:-/var/lib/pgclocktb}"
+PGCTB_RUN_ID="$(date +%Y%m%d-%H%M%S)"
+PGCTB_LOG="${PGCTB_LOG_DIR}/run-${PGCTB_RUN_ID}.log"
+PGCTB_FAILED_MODULES=()
+PGCTB_OK_MODULES=()
+PGCTB_SKIPPED_MODULES=()
+PGCTB_APT_UPDATED=0
 
-export SECUREBOX_VERSION SECUREBOX_NAME SECUREBOX_ROOT SECUREBOX_DATA
-export SECUREBOX_BACKUP_ROOT SECUREBOX_LOG_DIR SECUREBOX_STATE_DIR
-export SECUREBOX_RUN_ID SECUREBOX_LOG
+export PGCTB_VERSION PGCTB_NAME PGCTB_ROOT PGCTB_DATA
+export PGCTB_BACKUP_ROOT PGCTB_LOG_DIR PGCTB_STATE_DIR
+export PGCTB_RUN_ID PGCTB_LOG
 
-mkdir -p "$SECUREBOX_LOG_DIR" "$SECUREBOX_STATE_DIR" "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
-chmod 700 "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
+mkdir -p "$PGCTB_LOG_DIR" "$PGCTB_STATE_DIR" "$PGCTB_BACKUP_ROOT" 2>/dev/null || true
+chmod 700 "$PGCTB_BACKUP_ROOT" 2>/dev/null || true
 
 log() {
   local level="$1"; shift
   local msg="$*"
   local ts
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" >>"$SECUREBOX_LOG" 2>/dev/null || true
+  printf '[%s] [%s] %s\n' "$ts" "$level" "$msg" >>"$PGCTB_LOG" 2>/dev/null || true
 }
 
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "MrClock must be run as root. Try: sudo mrclock" >&2
+    echo "PGClockTB must be run as root. Try: sudo pgclock" >&2
     exit 1
   fi
 }
@@ -58,7 +66,7 @@ have_cmd() {
 run_cmd() {
   local desc="$1"; shift
   log INFO "CMD: $desc :: $*"
-  if "$@" >>"$SECUREBOX_LOG" 2>&1; then
+  if "$@" >>"$PGCTB_LOG" 2>&1; then
     return 0
   fi
   local rc=$?
@@ -90,19 +98,19 @@ is_true() {
 }
 
 is_dry_run() {
-  is_true "${SECUREBOX_DRY_RUN:-0}"
+  is_true "${PGCTB_DRY_RUN:-0}"
 }
 
 # Strict: only explicit yes. Empty / unset / "no" => false. Never default optional work to on.
 answered_yes() {
   local key="$1"
-  local val="${SECUREBOX_ANSWERS[$key]:-}"
+  local val="${PGCTB_ANSWERS[$key]:-}"
   is_true "$val"
 }
 
 answered_no() {
   local key="$1"
-  local val="${SECUREBOX_ANSWERS[$key]:-}"
+  local val="${PGCTB_ANSWERS[$key]:-}"
   case "${val,,}" in
     0|n|no|false|off) return 0 ;;
     *) return 1 ;;
@@ -115,10 +123,10 @@ require_answer_yes() {
   local mod="$2"
   local why="${3:-not explicitly enabled by user}"
   if answered_yes "$key"; then
-    log INFO "Answer check OK: ${mod}: ${key}=${SECUREBOX_ANSWERS[$key]}"
+    log INFO "Answer check OK: ${mod}: ${key}=${PGCTB_ANSWERS[$key]}"
     return 0
   fi
-  log INFO "Answer check SKIP: ${mod}: ${key}='${SECUREBOX_ANSWERS[$key]:-}' (${why})"
+  log INFO "Answer check SKIP: ${mod}: ${key}='${PGCTB_ANSWERS[$key]:-}' (${why})"
   return 1
 }
 
@@ -135,6 +143,104 @@ is_uint() {
 
 is_port() {
   is_uint "${1-}" && (( $1 >= 1 && $1 <= 65535 ))
+}
+
+# --- migration from MrClock ToolBox / SecureBox (< 0.4.0) ---------------------
+# Old dirs are moved to the new names and replaced by a symlink, so anything
+# that still points at an old path keeps working: acme.sh hook paths stored in
+# domain confs (sometimes base64), armed rollback units, cron entries.
+# /etc artifacts (00-securebox.conf, 99-securebox-*.conf, nft table securebox…)
+# keep their names on purpose: renaming live sshd/network drop-ins is risky and
+# restore/rollback must still find what older versions wrote.
+PGCTB_LEGACY_STATE_DIR="${PGCTB_LEGACY_STATE_DIR:-/var/lib/securebox}"
+PGCTB_LEGACY_LOG_DIR="${PGCTB_LEGACY_LOG_DIR:-/var/log/securebox}"
+PGCTB_LEGACY_BACKUP_ROOT="${PGCTB_LEGACY_BACKUP_ROOT:-/var/backups/securebox}"
+
+_pgctb_migrate_dir() {
+  # _pgctb_migrate_dir OLD NEW [drop-aside]
+  local old="$1" new="$2" drop_aside="${3:-}"
+  [[ -n "$old" && -n "$new" ]] || return 0
+  [[ -d "$old" && ! -L "$old" ]] || return 0   # nothing to migrate / already done
+  [[ "$old" -ef "$new" ]] && return 0
+  if [[ -d "$new" && ! -L "$new" ]] && [[ -z "$(ls -A "$new" 2>/dev/null)" ]]; then
+    rmdir "$new" 2>/dev/null || true
+  fi
+  if [[ ! -e "$new" ]]; then
+    mkdir -p "$(dirname "$new")" || return 1
+    mv "$old" "$new" || return 1
+  else
+    # Both hold data (e.g. this run already logged): add what is missing,
+    # never overwrite newer files, keep the old tree aside.
+    tar -C "$old" -cf - . | tar -C "$new" --skip-old-files -xf - || return 1
+    if [[ "$drop_aside" == "drop-aside" ]]; then
+      rm -rf "${old:?}" || return 1               # logs: everything was copied
+    else
+      mv "$old" "${old}.pre-pgclocktb.$(date +%Y%m%d%H%M%S)" || return 1
+    fi
+  fi
+  ln -s "$new" "$old" || return 1
+  chmod 700 "$new" 2>/dev/null || true
+  log INFO "Migrated ${old} -> ${new}"
+}
+
+pgctb_migrate_legacy_dirs() {
+  local rc=0
+  _pgctb_migrate_dir "$PGCTB_LEGACY_STATE_DIR" "$PGCTB_STATE_DIR" || rc=1
+  # This run already logs into the new dir, so logs always merge
+  _pgctb_migrate_dir "$PGCTB_LEGACY_LOG_DIR" "$PGCTB_LOG_DIR" drop-aside || rc=1
+  _pgctb_migrate_dir "$PGCTB_LEGACY_BACKUP_ROOT" "$PGCTB_BACKUP_ROOT" || rc=1
+  return "$rc"
+}
+
+# --- safe KEY=VALUE state files ---------------------------------------------
+# State files are never `source`d: a value with spaces or $(...) would be run as
+# a command. Writers emit raw KEY=value lines; the loader only assigns keys from
+# an allow-list via printf -v (no eval).
+
+# kv_line KEY VALUE → prints KEY=VALUE with newlines/CR stripped from VALUE
+kv_line() {
+  local __k="$1" __v="${2-}"
+  __v="${__v//$'\r'/}"
+  __v="${__v//$'\n'/ }"
+  printf '%s=%s\n' "$__k" "$__v"
+}
+
+# kv_load_file FILE KEY... → assigns only the listed keys found in FILE
+kv_load_file() {
+  local __f="$1"
+  shift
+  [[ -f "$__f" ]] || return 0
+  local __line __key __val __ok __want
+  while IFS= read -r __line || [[ -n "$__line" ]]; do
+    [[ "$__line" =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ "$__line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    __key="${BASH_REMATCH[1]}"
+    __val="${BASH_REMATCH[2]}"
+    __ok=0
+    for __want in "$@"; do
+      [[ "$__want" == "$__key" ]] && { __ok=1; break; }
+    done
+    (( __ok )) || continue
+    # Legacy files quoted some values: strip one matching pair of quotes
+    if [[ "$__val" =~ ^\"(.*)\"$ ]] || [[ "$__val" =~ ^\'(.*)\'$ ]]; then
+      __val="${BASH_REMATCH[1]}"
+    fi
+    printf -v "$__key" '%s' "$__val"
+  done <"$__f"
+}
+
+# normalize_port_list "8443, 9000 x 8443" → "8443 9000" (valid, deduped)
+normalize_port_list() {
+  local raw="${1-}" p out=""
+  local -a parts=()
+  raw="${raw//,/ }"
+  read -r -a parts <<<"$raw"
+  for p in "${parts[@]}"; do
+    [[ "$p" =~ ^[1-9][0-9]{0,4}$ ]] && is_port "$p" || continue
+    [[ " $out " == *" $p "* ]] && continue
+    out+="${out:+ }$p"
+  done
+  printf '%s\n' "$out"
 }
 
 # Single port or UFW-style range (e.g. 1000:2000)
@@ -223,10 +329,10 @@ backup_file() {
     log INFO "DRY-RUN skip backup_file: $src"
     return 0
   fi
-  local dest_dir="${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  local dest_dir="${PGCTB_BACKUP_ROOT}/${PGCTB_RUN_ID}"
   local manifest="${dest_dir}/MANIFEST.txt"
   mkdir -p "$dest_dir"
-  chmod 700 "$SECUREBOX_BACKUP_ROOT" 2>/dev/null || true
+  chmod 700 "$PGCTB_BACKUP_ROOT" 2>/dev/null || true
   local abs
   if [[ "$src" == /* ]]; then
     abs="$src"
@@ -258,15 +364,15 @@ backup_file() {
 
 # Remember which run id holds the latest toolbox changes (for Undo menu)
 record_backup_run() {
-  mkdir -p "$SECUREBOX_STATE_DIR"
+  mkdir -p "$PGCTB_STATE_DIR"
   # Never overwrite last_recommended_run with a restore safety snapshot
-  if [[ "${SECUREBOX_ANSWERS[do_restore]:-}" != "yes" ]]; then
-    printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_backup_run"
-    printf '%s\n' "$SECUREBOX_RUN_ID" >"${SECUREBOX_STATE_DIR}/last_recommended_run"
+  if [[ "${PGCTB_ANSWERS[do_restore]:-}" != "yes" ]]; then
+    printf '%s\n' "$PGCTB_RUN_ID" >"${PGCTB_STATE_DIR}/last_backup_run"
+    printf '%s\n' "$PGCTB_RUN_ID" >"${PGCTB_STATE_DIR}/last_recommended_run"
   fi
-  local hist="${SECUREBOX_STATE_DIR}/backup_runs.txt"
-  if [[ ! -f "$hist" ]] || ! grep -qxF "$SECUREBOX_RUN_ID" "$hist" 2>/dev/null; then
-    printf '%s\n' "$SECUREBOX_RUN_ID" >>"$hist"
+  local hist="${PGCTB_STATE_DIR}/backup_runs.txt"
+  if [[ ! -f "$hist" ]] || ! grep -qxF "$PGCTB_RUN_ID" "$hist" 2>/dev/null; then
+    printf '%s\n' "$PGCTB_RUN_ID" >>"$hist"
   fi
 }
 
@@ -274,8 +380,8 @@ record_backup_run() {
 state_record() {
   local key="$1"
   local value="$2"
-  mkdir -p "$SECUREBOX_STATE_DIR"
-  printf '%s\n' "$value" >"${SECUREBOX_STATE_DIR}/${key}"
+  mkdir -p "$PGCTB_STATE_DIR"
+  printf '%s\n' "$value" >"${PGCTB_STATE_DIR}/${key}"
 }
 
 # Back-compat alias — now refreshes like state_record (was first-write-wins)
@@ -347,7 +453,7 @@ recover_ssh_env() {
 
 state_get() {
   local key="$1"
-  local f="${SECUREBOX_STATE_DIR}/${key}"
+  local f="${PGCTB_STATE_DIR}/${key}"
   [[ -r "$f" ]] || return 1
   tr -d '[:space:]' <"$f"
 }
@@ -355,7 +461,7 @@ state_get() {
 # Snapshot key sysctl values before BBR / IPv6 modules overwrite them
 state_record_sysctl_baseline() {
   local key val
-  mkdir -p "${SECUREBOX_STATE_DIR}/sysctl"
+  mkdir -p "${PGCTB_STATE_DIR}/sysctl"
   for key in \
     net.ipv4.ip_forward \
     net.ipv4.tcp_congestion_control \
@@ -366,7 +472,7 @@ state_record_sysctl_baseline() {
     val="$(sysctl -n "$key" 2>/dev/null || true)"
     [[ -n "$val" ]] || continue
     # Refresh each run so restore matches the pre-change live value
-    printf '%s\n' "$val" >"${SECUREBOX_STATE_DIR}/sysctl/${key}"
+    printf '%s\n' "$val" >"${PGCTB_STATE_DIR}/sysctl/${key}"
   done
 }
 
@@ -380,7 +486,7 @@ write_sysctl_dropin() {
   mkdir -p "$(dirname "$file")"
   backup_file "$file"
   {
-    echo "# Managed by MrClock ${SECUREBOX_VERSION} (${SECUREBOX_RUN_ID})"
+    echo "# Managed by PGClockTB ${PGCTB_VERSION} (${PGCTB_RUN_ID})"
     echo "# Do not edit by hand unless you know what you are doing."
     printf '%s\n' "$@"
   } >"$file"
@@ -388,28 +494,28 @@ write_sysctl_dropin() {
 }
 
 module_ok() {
-  SECUREBOX_OK_MODULES+=("$1")
+  PGCTB_OK_MODULES+=("$1")
   log INFO "Module OK: $1"
 }
 
 module_fail() {
-  SECUREBOX_FAILED_MODULES+=("$1|$2")
+  PGCTB_FAILED_MODULES+=("$1|$2")
   log ERROR "Module FAIL: $1 — $2"
 }
 
 module_skip() {
-  SECUREBOX_SKIPPED_MODULES+=("$1|$2")
+  PGCTB_SKIPPED_MODULES+=("$1|$2")
   log WARN "Module SKIP: $1 — $2"
 }
 
 apt_update_safe() {
   export DEBIAN_FRONTEND=noninteractive
   # Once per run — Apply All calls many modules that install packages
-  if [[ "${SECUREBOX_APT_UPDATED:-0}" == "1" ]]; then
+  if [[ "${PGCTB_APT_UPDATED:-0}" == "1" ]]; then
     return 0
   fi
   if retry_cmd 3 3 apt-get update -y; then
-    SECUREBOX_APT_UPDATED=1
+    PGCTB_APT_UPDATED=1
     return 0
   fi
   return 1
@@ -487,8 +593,8 @@ confirm_continue_on_error() {
   local module="$1"
   local err="$2"
   ui_error "${module}: ${err}"
-  ui_warn "MrClock will continue with remaining tasks when possible."
-  if [[ -n "${SECUREBOX_ANSWERS[continue_on_error]:-}" ]] && is_true "${SECUREBOX_ANSWERS[continue_on_error]}"; then
+  ui_warn "PGClockTB will continue with remaining tasks when possible."
+  if [[ -n "${PGCTB_ANSWERS[continue_on_error]:-}" ]] && is_true "${PGCTB_ANSWERS[continue_on_error]}"; then
     return 0
   fi
   if ! have_tty; then

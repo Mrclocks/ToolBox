@@ -4,7 +4,7 @@
 #   ./scripts/gen-checksums.sh
 # Then upload to the GitHub Release as assets:
 #   - install.sh
-#   - ToolBox-<tag>.tar.gz
+#   - PGClockTB-<tag>.tar.gz
 #   - SHA256SUMS
 #   - SHA256SUMS.asc   (gpg --detach-sign -a -o SHA256SUMS.asc SHA256SUMS)
 set -euo pipefail
@@ -25,15 +25,15 @@ mkdir -p "$OUTDIR"
 
 cp -a install.sh "${OUTDIR}/install.sh"
 
-ARCHIVE_NAME="ToolBox-${ASSET_TAG}.tar.gz"
-# Pack under ToolBox-<tag>/ so install.sh finds a ToolBox-* root after extract.
+ARCHIVE_NAME="PGClockTB-${ASSET_TAG}.tar.gz"
+# Pack under PGClockTB-<tag>/ so install.sh finds a PGClockTB-* root after extract.
 # Flat tarballs break the one-liner with "archive layout unexpected".
-STAGE="${OUTDIR}/stage/ToolBox-${ASSET_TAG}"
+STAGE="${OUTDIR}/stage/PGClockTB-${ASSET_TAG}"
 mkdir -p "$STAGE"
 tar --exclude='./.git' --exclude='./dist' --exclude='./SHA256SUMS' --exclude='./SHA256SUMS.asc' \
   --exclude='./.cursor' \
   -C "$ROOT" -cf - . | tar -C "$STAGE" -xf -
-tar -czf "${OUTDIR}/${ARCHIVE_NAME}" -C "${OUTDIR}/stage" "ToolBox-${ASSET_TAG}"
+tar -czf "${OUTDIR}/${ARCHIVE_NAME}" -C "${OUTDIR}/stage" "PGClockTB-${ASSET_TAG}"
 rm -rf "${OUTDIR}/stage"
 
 (
@@ -43,13 +43,13 @@ rm -rf "${OUTDIR}/stage"
   cat SHA256SUMS
 )
 
-# Sanity: archive must contain a complete tree (same bar as _securebox_have_tree)
+# Sanity: archive must contain a complete tree (same bar as _pgctb_have_tree)
 # (Avoid `tar | grep` under pipefail — SIGPIPE from early grep exit looks like failure.)
 listing="$(tar -tzf "${OUTDIR}/${ARCHIVE_NAME}")"
 for need in \
-  "ToolBox-${ASSET_TAG}/lib/common.sh" \
-  "ToolBox-${ASSET_TAG}/data/abuse-ranges.txt" \
-  "ToolBox-${ASSET_TAG}/data/abuse-ranges-aggressive.txt"
+  "PGClockTB-${ASSET_TAG}/lib/common.sh" \
+  "PGClockTB-${ASSET_TAG}/data/abuse-ranges.txt" \
+  "PGClockTB-${ASSET_TAG}/data/abuse-ranges-aggressive.txt"
 do
   if ! grep -qx "$need" <<<"$listing"; then
     echo "ERROR: packed archive missing ${need}" >&2

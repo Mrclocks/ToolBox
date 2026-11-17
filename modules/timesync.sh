@@ -5,7 +5,7 @@
 module_timesync() {
   ui_step "Time synchronization"
   if ! require_answer_yes do_timesync timesync "time sync not explicitly enabled"; then
-    module_skip "timesync" "do_timesync='${SECUREBOX_ANSWERS[do_timesync]:-}'"
+    module_skip "timesync" "do_timesync='${PGCTB_ANSWERS[do_timesync]:-}'"
     return 0
   fi
   if is_dry_run; then

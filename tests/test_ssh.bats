@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  pgctb_test_dirs
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/modules/ssh.sh"
 }
@@ -11,9 +12,9 @@ setup() {
 @test "_ssh_write_dropin omits Protocol 2" {
   local tmp
   tmp="$(mktemp)"
-  SECUREBOX_ANSWERS["ssh_password_auth"]=keep
-  SECUREBOX_ANSWERS["ssh_permit_root"]=keep
-  SECUREBOX_ANSWERS["ssh_max_auth_tries"]=5
+  PGCTB_ANSWERS["ssh_password_auth"]=keep
+  PGCTB_ANSWERS["ssh_permit_root"]=keep
+  PGCTB_ANSWERS["ssh_max_auth_tries"]=5
   _ssh_write_dropin "$tmp" 22 2222 0
   run grep -E '^Protocol ' "$tmp"
   [ "$status" -ne 0 ]
@@ -29,9 +30,9 @@ setup() {
 @test "_ssh_write_dropin finalize keeps only new port" {
   local tmp
   tmp="$(mktemp)"
-  SECUREBOX_ANSWERS["ssh_password_auth"]=keep
-  SECUREBOX_ANSWERS["ssh_permit_root"]=keep
-  SECUREBOX_ANSWERS["ssh_max_auth_tries"]=7
+  PGCTB_ANSWERS["ssh_password_auth"]=keep
+  PGCTB_ANSWERS["ssh_permit_root"]=keep
+  PGCTB_ANSWERS["ssh_max_auth_tries"]=7
   _ssh_write_dropin "$tmp" 22 2222 1
   ports="$(grep -cE '^Port ' "$tmp" || true)"
   [ "$ports" -eq 1 ]

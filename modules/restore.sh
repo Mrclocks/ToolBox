@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Module: restore MrClock-managed changes from a backup run
+# Module: restore PGClockTB-managed changes from a backup run
 # Restores: DNS / MTU / SSH / UFW / Fail2Ban / sysctl / abuse / related confs
 # shellcheck shell=bash
 
-# Files MrClock may create even when no prior copy existed
+# Files PGClockTB may create even when no prior copy existed
 RESTORE_MANAGED_PATHS=(
   /etc/ssh/sshd_config.d/00-securebox.conf
   /etc/ssh/sshd_config.d/99-securebox.conf
@@ -24,9 +24,9 @@ RESTORE_COUNT_REMOVED=0
 _restore_list_runs() {
   # Newest first — print run ids that have a backup directory
   local d
-  if [[ -d "$SECUREBOX_BACKUP_ROOT" ]]; then
+  if [[ -d "$PGCTB_BACKUP_ROOT" ]]; then
     # shellcheck disable=SC2012
-    ls -1dt "${SECUREBOX_BACKUP_ROOT}"/*/ 2>/dev/null | while read -r d; do
+    ls -1dt "${PGCTB_BACKUP_ROOT}"/*/ 2>/dev/null | while read -r d; do
       [[ -d "$d" ]] || continue
       basename "${d%/}"
     done
@@ -36,29 +36,29 @@ _restore_list_runs() {
 _restore_pick_default_run() {
   local r
   # Prefer last_recommended_run — never the restore's own safety snapshot
-  if [[ -r "${SECUREBOX_STATE_DIR}/last_recommended_run" ]]; then
-    r="$(tr -d '[:space:]' <"${SECUREBOX_STATE_DIR}/last_recommended_run")"
-    if [[ -n "$r" && "$r" != "$SECUREBOX_RUN_ID" && -d "${SECUREBOX_BACKUP_ROOT}/${r}" ]]; then
+  if [[ -r "${PGCTB_STATE_DIR}/last_recommended_run" ]]; then
+    r="$(tr -d '[:space:]' <"${PGCTB_STATE_DIR}/last_recommended_run")"
+    if [[ -n "$r" && "$r" != "$PGCTB_RUN_ID" && -d "${PGCTB_BACKUP_ROOT}/${r}" ]]; then
       # Skip runs that look like restore safety snapshots
-      if [[ ! -f "${SECUREBOX_BACKUP_ROOT}/${r}/.restore_safety" ]]; then
+      if [[ ! -f "${PGCTB_BACKUP_ROOT}/${r}/.restore_safety" ]]; then
         printf '%s\n' "$r"
         return 0
       fi
     fi
   fi
-  if [[ -r "${SECUREBOX_STATE_DIR}/last_backup_run" ]]; then
-    r="$(tr -d '[:space:]' <"${SECUREBOX_STATE_DIR}/last_backup_run")"
-    if [[ -n "$r" && "$r" != "$SECUREBOX_RUN_ID" && -d "${SECUREBOX_BACKUP_ROOT}/${r}" ]]; then
-      if [[ ! -f "${SECUREBOX_BACKUP_ROOT}/${r}/.restore_safety" ]]; then
+  if [[ -r "${PGCTB_STATE_DIR}/last_backup_run" ]]; then
+    r="$(tr -d '[:space:]' <"${PGCTB_STATE_DIR}/last_backup_run")"
+    if [[ -n "$r" && "$r" != "$PGCTB_RUN_ID" && -d "${PGCTB_BACKUP_ROOT}/${r}" ]]; then
+      if [[ ! -f "${PGCTB_BACKUP_ROOT}/${r}/.restore_safety" ]]; then
         printf '%s\n' "$r"
         return 0
       fi
     fi
   fi
   while IFS= read -r r; do
-    [[ -z "$r" || "$r" == "$SECUREBOX_RUN_ID" ]] && continue
-    [[ -d "${SECUREBOX_BACKUP_ROOT}/${r}" ]] || continue
-    [[ -f "${SECUREBOX_BACKUP_ROOT}/${r}/.restore_safety" ]] && continue
+    [[ -z "$r" || "$r" == "$PGCTB_RUN_ID" ]] && continue
+    [[ -d "${PGCTB_BACKUP_ROOT}/${r}" ]] || continue
+    [[ -f "${PGCTB_BACKUP_ROOT}/${r}/.restore_safety" ]] && continue
     printf '%s\n' "$r"
     return 0
   done < <(_restore_list_runs)
@@ -66,7 +66,7 @@ _restore_pick_default_run() {
 }
 
 _restore_live_state() {
-  # Revert live runtime state recorded before MrClock changes
+  # Revert live runtime state recorded before PGClockTB changes
   ui_info "Reverting live runtime state (MTU / sysctl / services / UFW)..."
 
   # MTU
@@ -85,8 +85,8 @@ _restore_live_state() {
 
   # sysctl
   local keyfile key val
-  if [[ -d "${SECUREBOX_STATE_DIR}/sysctl" ]]; then
-    for keyfile in "${SECUREBOX_STATE_DIR}/sysctl/"*; do
+  if [[ -d "${PGCTB_STATE_DIR}/sysctl" ]]; then
+    for keyfile in "${PGCTB_STATE_DIR}/sysctl/"*; do
       [[ -f "$keyfile" ]] || continue
       key="$(basename "$keyfile")"
       val="$(tr -d '[:space:]' <"$keyfile")"
@@ -99,8 +99,8 @@ _restore_live_state() {
 
   # Services — unmask / re-enable what we masked
   local sf svc
-  if [[ -d "${SECUREBOX_STATE_DIR}/services" ]]; then
-    for sf in "${SECUREBOX_STATE_DIR}/services/"*.state; do
+  if [[ -d "${PGCTB_STATE_DIR}/services" ]]; then
+    for sf in "${PGCTB_STATE_DIR}/services/"*.state; do
       [[ -f "$sf" ]] || continue
       svc="$(basename "$sf" .state)"
       local was_masked was_enabled was_active
@@ -125,7 +125,7 @@ _restore_live_state() {
   ufw_was="$(state_get ufw_was_enabled 2>/dev/null || true)"
   if [[ "$ufw_was" == "no" ]] && have_cmd ufw; then
     if ufw status 2>/dev/null | grep -qi 'Status: active'; then
-      ui_warn "UFW was disabled before MrClock — disabling it again after restore"
+      ui_warn "UFW was disabled before PGClockTB — disabling it again after restore"
       ufw --force disable >/dev/null 2>&1 || true
     fi
   fi
@@ -301,39 +301,39 @@ _restore_preview() {
     local n
     n="$(find "$backup_root" -type f ! -name MANIFEST.txt 2>/dev/null | wc -l | tr -d ' ')"
     ui_kv "Legacy backup files" "$n"
-    ui_info "Will copy all backed-up files and remove MrClock drop-ins not in backup"
+    ui_info "Will copy all backed-up files and remove PGClockTB drop-ins not in backup"
   fi
-  ui_kv "Also" "Remove abuse nft/iptables rules created by MrClock"
+  ui_kv "Also" "Remove abuse nft/iptables rules created by PGClockTB"
   ui_box_end
 }
 
 module_restore() {
-  ui_step "Restore previous MrClock changes"
+  ui_step "Restore previous PGClockTB changes"
 
   if ! require_answer_yes do_restore restore "restore not explicitly confirmed"; then
-    module_skip "restore" "do_restore='${SECUREBOX_ANSWERS[do_restore]:-}'"
+    module_skip "restore" "do_restore='${PGCTB_ANSWERS[do_restore]:-}'"
     return 0
   fi
 
-  local run_id="${SECUREBOX_ANSWERS[restore_run]:-}"
+  local run_id="${PGCTB_ANSWERS[restore_run]:-}"
   if [[ -z "$run_id" ]]; then
     run_id="$(_restore_pick_default_run)"
   fi
-  if [[ -z "$run_id" || ! -d "${SECUREBOX_BACKUP_ROOT}/${run_id}" ]]; then
-    module_fail "restore" "no backup run found under ${SECUREBOX_BACKUP_ROOT}"
+  if [[ -z "$run_id" || ! -d "${PGCTB_BACKUP_ROOT}/${run_id}" ]]; then
+    module_fail "restore" "no backup run found under ${PGCTB_BACKUP_ROOT}"
     confirm_continue_on_error "restore" "no backup available" || return 1
     return 0
   fi
 
-  local backup_root="${SECUREBOX_BACKUP_ROOT}/${run_id}"
+  local backup_root="${PGCTB_BACKUP_ROOT}/${run_id}"
   ui_info "Using backup run: ${run_id}"
   _restore_preview "$backup_root"
 
   # Safety snapshot of current files — marked so it is NEVER the recommended restore target
-  mkdir -p "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
-  touch "${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}/.restore_safety"
+  mkdir -p "${PGCTB_BACKUP_ROOT}/${PGCTB_RUN_ID}"
+  touch "${PGCTB_BACKUP_ROOT}/${PGCTB_RUN_ID}/.restore_safety"
   # Do not call record_backup_run here — that would make safety the "recommended" run
-  ui_info "Safety snapshot of current files → ${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  ui_info "Safety snapshot of current files → ${PGCTB_BACKUP_ROOT}/${PGCTB_RUN_ID}"
 
   local restored=0 removed=0
   RESTORE_COUNT_RESTORED=0
@@ -349,9 +349,9 @@ module_restore() {
   [[ "$restored" =~ ^[0-9]+$ ]] || restored=0
   [[ "$removed" =~ ^[0-9]+$ ]] || removed=0
 
-  # Always tear down MrClock abuse table (rules are not plain file restore)
+  # Always tear down PGClockTB abuse table (rules are not plain file restore)
   if declare -F _abuse_remove_all >/dev/null 2>&1; then
-    ui_info "Removing MrClock abuse IP block rules..."
+    ui_info "Removing PGClockTB abuse IP block rules..."
     _abuse_remove_all
   fi
   # If nftables.conf was restored, strip stale include if abuse file gone
@@ -366,9 +366,9 @@ module_restore() {
   _restore_reload_services
 
   # Clear pending SSH cutover state
-  rm -f "${SECUREBOX_STATE_DIR}/ssh_cutover" \
-        "${SECUREBOX_STATE_DIR}/ssh_old_port" \
-        "${SECUREBOX_STATE_DIR}/ssh_new_port" 2>/dev/null || true
+  rm -f "${PGCTB_STATE_DIR}/ssh_cutover" \
+        "${PGCTB_STATE_DIR}/ssh_old_port" \
+        "${PGCTB_STATE_DIR}/ssh_new_port" 2>/dev/null || true
 
   module_ok "restore"
   ui_success "Restore complete from ${run_id} — restored ${restored} file(s), removed ${removed}"
