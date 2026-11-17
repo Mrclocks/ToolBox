@@ -147,6 +147,7 @@ run_level() {
 declare -gA PGCTB_RISK_TEXT=(
   [ssh]="A wrong port, firewall or key setting can lock you out of SSH.|sshd -t validation before reload · old+new port kept during cutover · password login stays on without a usable key · timed rollback|Keep THIS session open and test login from a NEW terminal before confirming."
   [ufw]="Every port that is not allowed gets blocked — panel/node inbounds whose ports are missing stop working for users.|SSH ports always allowed · refuses to enable without SSH rules · rules shown before enable · timed rollback|Use auto-discover for listening ports and add every inbound port of PasarGuard."
+  [node_cert]="The panel pins each node's certificate (pasted in Panel → Nodes). Replacing it breaks panel↔node until you paste the new one — and again after EVERY renewal (~60 days).|original node certificate is backed up · SSL → Status flags every change · SSL → Node certificate can restore the original|Nodes normally keep their self-signed certificate; only continue if you really need a public one."
   [abuse]="Blocks whole IP ranges — legitimate users or cloud clients inside them lose access (especially the aggressive profile).|your admin IP is always allowed first · established connections are kept · one-step removal in Undo|Prefer the minimal profile."
 )
 

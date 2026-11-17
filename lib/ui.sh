@@ -161,6 +161,21 @@ ui_read() {
   printf -v "$__dest" '%s' "$__line"
 }
 
+ui_read_secret() {
+  # ui_read_secret VAR PROMPT — no echo, never logged
+  local __dest="$1" __line="" __fd=""
+  printf '%s: ' "$2"
+  if [[ -e /dev/tty ]] && { exec {__fd}<>/dev/tty; } 2>/dev/null; then
+    IFS= read -r -s -u "$__fd" __line || __line=""
+    exec {__fd}>&- 2>/dev/null || true
+  elif [[ -t 0 ]]; then
+    IFS= read -r -s __line || __line=""
+  fi
+  printf '\n'
+  __line="${__line//$'\r'/}"
+  printf -v "$__dest" '%s' "$__line"
+}
+
 ui_pause() {
   local msg="${1:-Press Enter to continue...}"
   if have_tty; then

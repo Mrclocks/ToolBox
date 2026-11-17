@@ -98,9 +98,12 @@ EOF
 
   PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
   [ "$status" -eq 0 ]
-  [ -f "${SSL_PANEL_CERT_DIR}/demo.example.com.cer" ]
-  [ -f "${SSL_PANEL_CERT_DIR}/demo.example.com.cer.key" ]
-  [ -f "${SSL_PANEL_CERT_DIR}/cdn.example.com.cer" ]
+  [ -f "${SSL_PANEL_CERT_DIR}/demo.example.com/fullchain.pem" ]
+  [ -f "${SSL_PANEL_CERT_DIR}/demo.example.com/privkey.pem" ]
+  [ -f "${SSL_PANEL_CERT_DIR}/cdn.example.com/fullchain.pem" ]
+  [ "$(stat -c %a "${SSL_PANEL_CERT_DIR}/demo.example.com/privkey.pem")" = 600 ]
+  # Pre-0.7 .cer layout is not created when it did not exist
+  [ ! -e "${SSL_PANEL_CERT_DIR}/demo.example.com.cer" ]
   [ -f "${SSL_NODE_CERT_DIR}/ssl_cert.pem" ]
   [ -f "${SSL_NODE_CERT_DIR}/ssl_key.pem" ]
   [ "$(cat "${SSL_NODE_CERT_DIR}/ssl_cert.pem")" = "CERT" ]

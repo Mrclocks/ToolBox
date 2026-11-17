@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Module: PasarGuard SSL issue + auto-renew (acme.sh)
-# Panel certs  → /var/lib/pasarguard/certs/<domain>.cer[.key]
+# Panel certs  → /var/lib/pasarguard/certs/<domain>/fullchain.pem + privkey.pem (official)
 # Node certs   → /var/lib/pg-node/certs/ssl_cert.pem + ssl_key.pem
 # shellcheck shell=bash
 
@@ -18,9 +18,11 @@ SSL_ACME_HOME="${SSL_ACME_HOME:-/root/.acme.sh}"
 SSL_ACME_BIN="${SSL_ACME_BIN:-${SSL_ACME_HOME}/acme.sh}"
 SSL_POST_HOOK_FAILED="${SSL_POST_HOOK_FAILED:-${SSL_STATE_DIR}/acme-post-hook.failed}"
 SSL_HAPROXY_CERT_DIR="${SSL_HAPROXY_CERT_DIR:-/etc/haproxy/certs}"
+SSL_PANEL_APP_DIR="${SSL_PANEL_APP_DIR:-/opt/pasarguard}"
+SSL_VERIFY_TRIES="${SSL_VERIFY_TRIES:-30}"
 PROXY_CONFIG_FILE="${PROXY_CONFIG_FILE:-${PGCTB_STATE_DIR}/proxy/config.env}"
 SSL_CONFIG_KEYS=(
-  SSL_ROLE SSL_PRIMARY SSL_DOMAINS SSL_KEY_TYPE SSL_EMAIL
+  SSL_ROLE SSL_PRIMARY SSL_DOMAINS SSL_KEY_TYPE SSL_METHOD SSL_EMAIL
   SSL_PANEL_CERT_DIR SSL_NODE_CERT_DIR SSL_HAPROXY_CERT_DIR SSL_ACME_HOME
 )
 
@@ -77,6 +79,7 @@ _ssl_valid_domain() {
 
 _ssl_parse_domains_arg() {
   # Sets SSL_DOMAINS_ARR and SSL_PRIMARY from a raw string. Returns 1 on bad input.
+  # "*.example.com" is accepted (DNS-01 only) but never as the primary domain.
   local raw="$1"
   local -a list=()
   local d
@@ -86,16 +89,46 @@ _ssl_parse_domains_arg() {
     return 1
   fi
   for d in "${list[@]}"; do
-    if ! _ssl_valid_domain "$d"; then
+    if ! _ssl_valid_domain "$d" && ! { [[ "$d" == \*.* ]] && _ssl_valid_domain "${d#\*.}"; }; then
       ui_error "Invalid domain: ${d}"
       return 1
     fi
   done
+  if [[ "${list[0]}" == \*.* ]]; then
+    ui_error "Put a normal domain first (e.g. example.com *.example.com) — it names the files."
+    return 1
+  fi
   SSL_DOMAINS_ARR=("${list[@]}")
   SSL_PRIMARY="${list[0]}"
   return 0
 }
 
+_ssl_has_wildcard() {
+  local d
+  for d in "$@"; do [[ "$d" == \*.* ]] && return 0; done
+  return 1
+}
+
+# Cloudflare edge IPv4 ranges (https://www.cloudflare.com/ips-v4)
+SSL_CF_RANGES=(173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22
+  141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20
+  197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13
+  104.24.0.0/14 172.64.0.0/13 131.0.72.0/22)
+
+_ssl_behind_cloudflare() {
+  # 0 if any A record of any domain is a Cloudflare edge IP (orange cloud)
+  local d ip c
+  for d in "$@"; do
+    [[ "$d" == \*.* ]] && continue
+    while IFS= read -r ip; do
+      is_ipv4 "$ip" || continue
+      for c in "${SSL_CF_RANGES[@]}"; do
+        ipv4_in_cidr "$ip" "$c" && return 0
+      done
+    done < <(_ssl_resolve_domain "$d")
+  done
+  return 1
+}
 _ssl_port80_busy() {
   if have_cmd ss; then
     ss -tlnH 2>/dev/null | awk '{print $4}' | grep -E '(:|\.)80$' >/dev/null 2>&1
@@ -360,12 +393,14 @@ if [[ -z "$PRIMARY" ]]; then
   echo "[ssl-deploy] SSL_PRIMARY empty" >&2
   exit 1
 fi
-read -r -a DOMAINS <<<"${SSL_DOMAINS:-$PRIMARY}"
-for d in "${DOMAINS[@]}"; do
-  if ! [[ "$d" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+read -r -a ALL_DOMAINS <<<"${SSL_DOMAINS:-$PRIMARY}"
+DOMAINS=()   # names that get their own files (wildcards are covered by the cert only)
+for d in "${ALL_DOMAINS[@]}"; do
+  if ! [[ "${d#\*.}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
     echo "[ssl-deploy] refusing invalid domain in config: $d" >&2
     exit 1
   fi
+  [[ "$d" == \*.* ]] || DOMAINS+=("$d")
 done
 
 SRC_CERT="${LIVE_DIR}/fullchain.cer"
@@ -417,11 +452,21 @@ install_file() {
 }
 
 deploy_panel() {
+  # Official PasarGuard layout: certs/<domain>/fullchain.pem + privkey.pem
+  # (/var/lib/pasarguard is bind-mounted into the panel container).
   mkdir -p "$PANEL_DIR" || { FAIL=1; return; }
   local d
   for d in "${DOMAINS[@]}"; do
-    install_file "$SRC_CERT" "${PANEL_DIR}/${d}.cer" 644 || FAIL=1
-    install_file "$SRC_KEY" "${PANEL_DIR}/${d}.cer.key" 600 || FAIL=1
+    mkdir -p "${PANEL_DIR}/${d}" || { FAIL=1; continue; }
+    chmod 755 "${PANEL_DIR}/${d}" 2>/dev/null || true
+    install_file "$SRC_CERT" "${PANEL_DIR}/${d}/fullchain.pem" 644 || FAIL=1
+    install_file "$SRC_KEY" "${PANEL_DIR}/${d}/privkey.pem" 600 || FAIL=1
+    # Pre-0.7 layout (<domain>.cer): keep refreshing it only where it exists,
+    # so an .env that still points there never serves an expired cert.
+    if [[ -f "${PANEL_DIR}/${d}.cer" ]]; then
+      install_file "$SRC_CERT" "${PANEL_DIR}/${d}.cer" 644 || FAIL=1
+      install_file "$SRC_KEY" "${PANEL_DIR}/${d}.cer.key" 600 || FAIL=1
+    fi
   done
 }
 
@@ -445,9 +490,24 @@ deploy_haproxy() {
 }
 
 deploy_node() {
+  # The panel pins the node certificate (admins paste it in Panel → Nodes).
+  # A changed cert breaks panel↔node until it is pasted again, so: keep the
+  # original once, and raise a loud marker whenever the node cert changes.
   mkdir -p "$NODE_DIR" || { FAIL=1; return; }
-  install_file "$SRC_CERT" "${NODE_DIR}/ssl_cert.pem" 644 || FAIL=1
+  chmod 700 "$NODE_DIR" 2>/dev/null || true
+  local cur="${NODE_DIR}/ssl_cert.pem"
+  if [[ -f "$cur" && ! -f "${cur}.pre-pgclocktb" ]]; then
+    cp -a "$cur" "${cur}.pre-pgclocktb" || FAIL=1
+    [[ -f "${NODE_DIR}/ssl_key.pem" ]] && { cp -a "${NODE_DIR}/ssl_key.pem" "${NODE_DIR}/ssl_key.pem.pre-pgclocktb" || FAIL=1; }
+  fi
+  if [[ -f "$cur" ]] && cmp -s "$SRC_CERT" "$cur"; then
+    return 0
+  fi
+  install_file "$SRC_CERT" "$cur" 644 || FAIL=1
   install_file "$SRC_KEY" "${NODE_DIR}/ssl_key.pem" 600 || FAIL=1
+  date -u +%Y-%m-%dT%H:%M:%SZ >"${STATE_DIR}/node-cert-changed"
+  echo "[ssl-deploy] NODE CERTIFICATE CHANGED — paste the new ${cur} into Panel → Nodes" >&2
+  logger -t pgclocktb-ssl "node certificate changed: paste ${cur} into Panel -> Nodes" 2>/dev/null || true
 }
 
 reload_compose() {
@@ -464,11 +524,13 @@ reload_compose() {
 }
 
 case "$ROLE" in
+  none) ;;   # deployment switched off (e.g. original node certificate restored)
   node) deploy_node ;;
   both) deploy_panel; deploy_haproxy; deploy_node ;;
   *) deploy_panel; deploy_haproxy ;;
 esac
 case "$ROLE" in
+  none) ;;
   node) reload_compose /opt/pg-node ;;
   both) reload_compose /opt/pasarguard; reload_compose /opt/pg-node ;;
   *) reload_compose /opt/pasarguard ;;
@@ -617,6 +679,7 @@ _ssl_load_config() {
   SSL_DOMAINS=""
   SSL_EMAIL=""
   SSL_KEY_TYPE=""
+  SSL_METHOD=""
   # Paths keep their module defaults unless the file overrides them
   kv_load_file "$SSL_CONFIG_FILE" "${SSL_CONFIG_KEYS[@]}"
   SSL_PANEL_CERT_DIR="${SSL_PANEL_CERT_DIR:-${SSL_PANEL_ROOT}/certs}"
@@ -638,6 +701,80 @@ _ssl_ecc_args() {
   fi
 }
 
+_ssl_method_args() {
+  # Fills SSL_METHOD_ARGS for acme.sh from SSL_METHOD (http | dns_cf)
+  SSL_METHOD_ARGS=()
+  case "${SSL_METHOD:-http}" in
+    dns_cf) SSL_METHOD_ARGS=(--dns dns_cf) ;;
+    *) SSL_METHOD_ARGS=(--standalone --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK") ;;
+  esac
+}
+
+_ssl_acme_cert_dir() {
+  # Prints the acme.sh dir of PRIMARY for the saved key type (ecc first)
+  local primary="$1" d
+  case "${SSL_KEY_TYPE:-}" in
+    rsa) d="${SSL_ACME_HOME}/${primary}" ;;
+    ecc) d="${SSL_ACME_HOME}/${primary}_ecc" ;;
+    *)
+      d="${SSL_ACME_HOME}/${primary}_ecc"
+      [[ -f "${d}/fullchain.cer" ]] || d="${SSL_ACME_HOME}/${primary}"
+      ;;
+  esac
+  printf '%s\n' "$d"
+}
+
+_ssl_cert_sans() {
+  openssl x509 -in "$1" -noout -ext subjectAltName 2>/dev/null \
+    | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p'
+}
+
+_ssl_existing_cert_ok() {
+  # 0 when acme.sh already holds a cert for PRIMARY that is valid > 30 days and
+  # lists every requested name (exact SAN match, wildcards included).
+  local primary="$1"
+  shift
+  have_cmd openssl || return 1
+  local dir cert d
+  for dir in "${SSL_ACME_HOME}/${primary}_ecc" "${SSL_ACME_HOME}/${primary}"; do
+    cert="${dir}/fullchain.cer"
+    [[ -s "$cert" ]] || continue
+    openssl x509 -in "$cert" -noout -checkend $((30 * 86400)) >/dev/null 2>&1 || continue
+    local sans
+    sans=" $(_ssl_cert_sans "$cert" | tr '\n' ' ') "
+    local all=1
+    for d in "$@"; do
+      [[ "$sans" == *" ${d} "* ]] || { all=0; break; }
+    done
+    (( all )) || continue
+    # Staging certs are not trusted — never reuse one
+    openssl x509 -in "$cert" -noout -issuer 2>/dev/null | grep -qiE 'staging|fake|\(STAGING\)' && continue
+    [[ "$dir" == *_ecc ]] && SSL_KEY_TYPE=ecc || SSL_KEY_TYPE=rsa
+    SSL_REUSE_EXPIRY="$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | cut -d= -f2)"
+    return 0
+  done
+  return 1
+}
+
+_ssl_staging_test() {
+  # Dry issue against Let's Encrypt STAGING (no rate limits) in a throwaway
+  # cert home: nothing is deployed and the real acme.sh state is untouched.
+  local -a d_args=() ; local d tmp rc=0
+  for d in "$@"; do d_args+=(-d "$d"); done
+  tmp="$(mktemp -d)"
+  ui_info "Staging test (Let's Encrypt test CA, nothing is installed)..."
+  _ssl_method_args
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" "$SSL_ACME_BIN" --issue --staging --force \
+    --cert-home "$tmp" "${d_args[@]}" --keylength ec-256 "${SSL_METHOD_ARGS[@]}" || rc=$?
+  rm -rf "$tmp"
+  if (( rc == 0 )); then
+    ui_success "Staging test passed — requesting the real certificate"
+  else
+    ui_error "Staging test failed — fix DNS / port 80 / API token first (no real request was made)"
+  fi
+  return "$rc"
+}
+
 _ssl_issue_cert() {
   local role="$1"
   local primary="$2"
@@ -656,37 +793,50 @@ _ssl_issue_cert() {
   local keyfile="${SSL_STATE_DIR}/live/key.pem"
   mkdir -p "${SSL_STATE_DIR}/live"
 
-  if ! _ssl_preflight_issue "${domains[@]}"; then
-    return 1
+  if [[ "${SSL_METHOD:-http}" == "http" ]]; then
+    _ssl_preflight_issue "${domains[@]}" || return 1
   fi
-
   _ssl_write_acme_port_hooks
   rm -f "$SSL_POST_HOOK_FAILED"
-  ui_info "Requesting certificate for: ${domains[*]}"
-  # pre/post hooks free :80 (HAProxy/etc) so HTTP-01 works now and on cron renew
-  if PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" \
-      "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
-      --keylength ec-256 \
-      --pre-hook "$SSL_PRE_HOOK" \
-      --post-hook "$SSL_POST_HOOK" \
-      --reloadcmd "$SSL_DEPLOY_HOOK"; then
-    SSL_KEY_TYPE=ecc
-  else
-    # Retry RSA if ECC fails on older stacks
-    ui_warn "ECC issue failed — retrying with RSA 2048"
-    if ! PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" \
-        "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
-        --keylength 2048 \
-        --pre-hook "$SSL_PRE_HOOK" \
-        --post-hook "$SSL_POST_HOOK" \
-        --reloadcmd "$SSL_DEPLOY_HOOK"; then
-      ui_error "Certificate issuance failed. Check DNS A/AAAA records point here and port 80 is free."
-      _ssl_report_post_hook || true
-      return 1
+  _ssl_method_args
+
+  local reuse=0
+  if [[ "${SSL_FORCE_REISSUE:-0}" != "1" ]] && _ssl_existing_cert_ok "$primary" "${domains[@]}"; then
+    ui_info "A valid certificate for these names already exists (expires ${SSL_REUSE_EXPIRY})."
+    if ! have_tty || ui_confirm "Reuse it instead of requesting a new one? (protects Let's Encrypt rate limits)" "Y"; then
+      reuse=1
     fi
-    SSL_KEY_TYPE=rsa
   fi
-  # Persist key type so install-cert / renew / repair target the right cert
+
+  if (( reuse == 0 )); then
+    if [[ "${SSL_STAGING_FIRST:-0}" == "1" ]]; then
+      _ssl_staging_test "${domains[@]}" || return 1
+    fi
+    ui_info "Requesting certificate for: ${domains[*]} (method: ${SSL_METHOD:-http})"
+    if PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" \
+        "$SSL_ACME_BIN" --issue --force --server letsencrypt "${d_args[@]}" \
+        --keylength ec-256 "${SSL_METHOD_ARGS[@]}" \
+        --reloadcmd "$SSL_DEPLOY_HOOK"; then
+      SSL_KEY_TYPE=ecc
+    else
+      # Retry RSA if ECC fails on older stacks
+      ui_warn "ECC issue failed — retrying with RSA 2048"
+      if ! PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" \
+          "$SSL_ACME_BIN" --issue --force --server letsencrypt "${d_args[@]}" \
+          --keylength 2048 "${SSL_METHOD_ARGS[@]}" \
+          --reloadcmd "$SSL_DEPLOY_HOOK"; then
+        if [[ "${SSL_METHOD:-http}" == "dns_cf" ]]; then
+          ui_error "Certificate issuance failed. Check the Cloudflare API token (Zone:DNS:Edit) and zone."
+        else
+          ui_error "Certificate issuance failed. Check DNS A/AAAA records point here and port 80 is free."
+        fi
+        _ssl_report_post_hook || true
+        return 1
+      fi
+      SSL_KEY_TYPE=rsa
+    fi
+  fi
+  # Persist key type + method so install-cert / renew / repair target the right cert
   _ssl_save_config "$role" "$primary" "${domains[@]}"
   _ssl_report_post_hook || true
 
@@ -712,10 +862,11 @@ _ssl_issue_cert() {
   if [[ -x "$SSL_ACME_BIN" ]]; then
     "$SSL_ACME_BIN" --install-cronjob >/dev/null 2>&1 || true
   fi
-  _ssl_register_acme_port_hooks "$primary" || true
+  if [[ "${SSL_METHOD:-http}" == "http" ]]; then
+    _ssl_register_acme_port_hooks "$primary" || true
+  fi
   return 0
 }
-
 _ssl_report_post_hook() {
   # Returns 1 (and explains) if the ACME post-hook could not restart a proxy
   [[ -f "$SSL_POST_HOOK_FAILED" ]] || return 0
@@ -821,43 +972,33 @@ _ssl_apply_env_paths() {
 
   case "$role" in
     panel|both)
-      if [[ -d /opt/pasarguard ]]; then
-        cert_path="${SSL_PANEL_CERT_DIR}/${primary}.cer"
-        key_path="${SSL_PANEL_CERT_DIR}/${primary}.cer.key"
-        if [[ -f "$panel_env" ]]; then
-          if declare -F backup_file >/dev/null 2>&1; then
-            backup_file "$panel_env" || true
-          else
-            cp -a "$panel_env" "${panel_env}.bak.pgclocktb.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
-          fi
-        else
+      panel_env="${SSL_PANEL_APP_DIR}/.env"
+      if [[ -d "$SSL_PANEL_APP_DIR" ]]; then
+        cert_path="${SSL_PANEL_CERT_DIR}/${primary}/fullchain.pem"
+        key_path="${SSL_PANEL_CERT_DIR}/${primary}/privkey.pem"
+        if [[ ! -f "$panel_env" ]]; then
           touch "$panel_env"
           chmod 600 "$panel_env"
         fi
+        backup_file "$panel_env" 2>/dev/null || true
         if _ssl_panel_behind_haproxy; then
           # TLS is terminated at HAProxy — do NOT re-enable Uvicorn direct TLS
-          _ssl_env_comment_key "$panel_env" "UVICORN_SSL_CERTFILE"
-          _ssl_env_comment_key "$panel_env" "UVICORN_SSL_KEYFILE"
-          _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
+          local k
+          for k in UVICORN_SSL_CERTFILE UVICORN_SSL_KEYFILE UVICORN_SSL_CA_TYPE UVICORN_UDS; do
+            _ssl_env_comment_key "$panel_env" "$k"
+          done
           ui_success "Panel behind HAProxy — left UVICORN_SSL_* commented (local HTTP)"
           ui_kv "Cert on disk" "$cert_path"
           ui_kv "Key on disk" "$key_path"
-          ui_info "HAProxy PEM refreshed by deploy hook under /etc/haproxy/certs/"
+          ui_info "HAProxy PEM refreshed by deploy hook under ${SSL_HAPROXY_CERT_DIR}/"
           applied=1
+        elif ! _ssl_panel_direct_tls "$panel_env" "$primary" "$cert_path" "$key_path"; then
+          return 1
         else
-          _ssl_env_upsert "$panel_env" "UVICORN_SSL_CERTFILE" "$cert_path" spaced
-          _ssl_env_upsert "$panel_env" "UVICORN_SSL_KEYFILE" "$key_path" spaced
-          # Direct TLS mode — UDS is for reverse-proxy setups
-          _ssl_env_comment_key "$panel_env" "UVICORN_UDS"
-          ui_success "Panel .env updated: ${panel_env}"
-          ui_kv "UVICORN_SSL_CERTFILE" "$cert_path"
-          ui_kv "UVICORN_SSL_KEYFILE" "$key_path"
-          ui_info "UVICORN_PORT left unchanged (change it yourself if you want 443)"
-          _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
           applied=1
         fi
       else
-        ui_warn "Panel dir /opt/pasarguard not found — skipped .env auto-update"
+        ui_warn "Panel dir ${SSL_PANEL_APP_DIR} not found — skipped .env auto-update"
       fi
       ;;
   esac
@@ -908,6 +1049,122 @@ _ssl_apply_env_paths() {
   return 0
 }
 
+_ssl_env_get() {
+  # _ssl_env_get FILE KEY → value of an ACTIVE "KEY = value" line (quotes stripped)
+  local file="$1" key="$2" line val
+  [[ -f "$file" ]] || return 1
+  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" | tail -n1)" || return 1
+  val="${line#*=}"
+  val="$(trim "$val")"
+  val="${val#\"}"; val="${val%\"}"
+  val="${val#\'}"; val="${val%\'}"
+  printf '%s\n' "$val"
+}
+
+_ssl_cert_fp() {
+  openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2
+}
+
+_ssl_served_fp() {
+  # _ssl_served_fp HOST PORT SNI → SHA-256 fingerprint of the leaf served there
+  local host="$1" port="$2" sni="$3"
+  echo | timeout 10 openssl s_client -connect "${host}:${port}" -servername "$sni" 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2
+}
+
+_ssl_verify_served_cert() {
+  # _ssl_verify_served_cert HOST PORT SNI CERT → 0 served == CERT · 1 not · 2 cannot tell
+  local host="$1" port="$2" sni="$3" cert="$4" want got i
+  have_cmd openssl || return 2
+  want="$(_ssl_cert_fp "$cert")"
+  [[ -n "$want" ]] || return 2
+  for ((i = 0; i < SSL_VERIFY_TRIES; i++)); do
+    got="$(_ssl_served_fp "$host" "$port" "$sni")"
+    [[ "$got" == "$want" ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+_ssl_panel_endpoint() {
+  # Prints "HOST PORT" the panel listens on (from .env), or fails for UDS
+  local env="$1" host port
+  [[ -n "$(_ssl_env_get "$env" UVICORN_UDS 2>/dev/null)" ]] && return 1
+  host="$(_ssl_env_get "$env" UVICORN_HOST 2>/dev/null || true)"
+  port="$(_ssl_env_get "$env" UVICORN_PORT 2>/dev/null || true)"
+  case "$host" in
+    ""|0.0.0.0|::|"[::]") host=127.0.0.1 ;;
+  esac
+  is_port "${port:-8000}" || return 1
+  printf '%s %s\n' "$host" "${port:-8000}"
+}
+
+_ssl_panel_sees_path() {
+  # 0 = panel container mounts PATH at the same path · 1 = it does not · 2 = cannot tell
+  local path="$1" cid src dst
+  have_cmd docker || return 2
+  cid="$(cd "$SSL_PANEL_APP_DIR" 2>/dev/null && docker compose ps -q 2>/dev/null | head -n1)"
+  [[ -n "$cid" ]] || return 2
+  while IFS='|' read -r src dst; do
+    [[ -n "$src" ]] || continue
+    if [[ "$path" == "$src" || "$path" == "${src%/}/"* ]]; then
+      [[ "$src" == "$dst" ]] && return 0
+    fi
+  done < <(docker inspect -f '{{range .Mounts}}{{.Source}}|{{.Destination}}{{"\n"}}{{end}}' "$cid" 2>/dev/null)
+  return 1
+}
+
+_ssl_panel_direct_tls() {
+  # Write UVICORN_SSL_* (official layout), restart, then require the panel to
+  # serve exactly this certificate — otherwise restore .env and restart again.
+  local env="$1" primary="$2" cert="$3" key="$4" rc=0 ep host="" port=""
+  _ssl_panel_sees_path "$cert" || rc=$?
+  if (( rc == 1 )); then
+    ui_error "Panel container cannot see ${cert} (no bind mount) — .env NOT changed"
+    ui_info "Mount ${SSL_PANEL_ROOT} into the panel container (the official compose does)"
+    return 1
+  fi
+  (( rc == 2 )) && ui_info "Could not inspect panel container mounts — continuing"
+
+  safety_txn_begin "panel-env" "$env" || return 1
+  _ssl_env_upsert "$env" "UVICORN_SSL_CERTFILE" "$cert" spaced
+  _ssl_env_upsert "$env" "UVICORN_SSL_KEYFILE" "$key" spaced
+  _ssl_env_upsert "$env" "UVICORN_SSL_CA_TYPE" "public" spaced
+  # Direct TLS mode — UDS is for reverse-proxy setups
+  _ssl_env_comment_key "$env" "UVICORN_UDS"
+  ui_kv "UVICORN_SSL_CERTFILE" "$cert"
+  ui_kv "UVICORN_SSL_KEYFILE" "$key"
+  ui_info "UVICORN_PORT left unchanged (change it yourself if you want 443)"
+  _ssl_restart_compose "$SSL_PANEL_APP_DIR" "PasarGuard panel"
+
+  rc=0
+  if ep="$(_ssl_panel_endpoint "$env")"; then
+    read -r host port <<<"$ep"
+    ui_info "Verifying the panel serves the new certificate on ${host}:${port}..."
+    _ssl_verify_served_cert "$host" "$port" "$primary" "$cert" || rc=$?
+  else
+    rc=2
+  fi
+  case "$rc" in
+    0)
+      safety_txn_commit
+      ui_success "Panel serves the new certificate (${host}:${port})"
+      ;;
+    2)
+      safety_txn_commit
+      ui_warn "Could not verify the served certificate (no openssl / UDS) — check https://${primary}:${port:-8000}/"
+      ;;
+    *)
+      ui_error "Panel did not serve the new certificate — restoring previous .env"
+      safety_txn_rollback
+      _ssl_restart_compose "$SSL_PANEL_APP_DIR" "PasarGuard panel"
+      return 1
+      ;;
+  esac
+  ui_success "Panel .env updated: ${env}"
+  return 0
+}
+
 _ssl_print_env_guide() {
   local role="$1"
   local primary="$2"
@@ -918,19 +1175,20 @@ _ssl_print_env_guide() {
   ui_box_start "Certificate paths"
   case "$role" in
     panel|both)
-      ui_kv "Panel cert" "${SSL_PANEL_CERT_DIR}/${primary}.cer"
-      ui_kv "Panel key" "${SSL_PANEL_CERT_DIR}/${primary}.cer.key"
-      if [[ -f /opt/pasarguard/.env ]]; then
-        ui_success "Written into /opt/pasarguard/.env (UVICORN_SSL_* only; port untouched)"
+      ui_kv "Panel cert" "${SSL_PANEL_CERT_DIR}/${primary}/fullchain.pem"
+      ui_kv "Panel key" "${SSL_PANEL_CERT_DIR}/${primary}/privkey.pem"
+      if [[ -f "${SSL_PANEL_APP_DIR}/.env" ]]; then
+        ui_success "Written into ${SSL_PANEL_APP_DIR}/.env (UVICORN_SSL_* only; port untouched)"
       else
         ui_info "If you install the panel later, re-run SSL → Show .env / path instructions"
-        printf '   UVICORN_SSL_CERTFILE = "%s/%s.cer"\n' "$SSL_PANEL_CERT_DIR" "$primary"
-        printf '   UVICORN_SSL_KEYFILE  = "%s/%s.cer.key"\n' "$SSL_PANEL_CERT_DIR" "$primary"
+        printf '   UVICORN_SSL_CERTFILE = "%s/%s/fullchain.pem"\n' "$SSL_PANEL_CERT_DIR" "$primary"
+        printf '   UVICORN_SSL_KEYFILE = "%s/%s/privkey.pem"\n' "$SSL_PANEL_CERT_DIR" "$primary"
+        printf '   UVICORN_SSL_CA_TYPE = "public"\n'
       fi
       if ((${#domains[@]} > 1)); then
         ui_info "SAN aliases also on disk:"
         for d in "${domains[@]}"; do
-          ui_kv "$d" "${SSL_PANEL_CERT_DIR}/${d}.cer"
+          ui_kv "$d" "${SSL_PANEL_CERT_DIR}/${d}/fullchain.pem"
         done
       fi
       ;;
@@ -942,7 +1200,8 @@ _ssl_print_env_guide() {
       if [[ -f /opt/pg-node/.env ]]; then
         ui_success "Written into /opt/pg-node/.env (SSL_CERT_FILE / SSL_KEY_FILE)"
       fi
-      ui_info "In PasarGuard panel → Nodes, use the same paths if the UI asks."
+      ui_warn "Panel → Nodes pins this certificate: paste the NEW ${SSL_NODE_CERT_DIR}/ssl_cert.pem there,"
+      ui_warn "and again after every renewal (SSL → Status shows when it changed)."
       ;;
   esac
   if _ssl_panel_behind_haproxy; then
@@ -956,6 +1215,87 @@ _ssl_print_env_guide() {
 
 # --- public actions --------------------------------------------------------
 
+_ssl_choose_role() {
+  # Sets SSL_CHOSEN_ROLE. Panel-only is the default; anything that replaces the
+  # node certificate goes through the 🔴 node_cert gate.
+  local detected="$1" choice
+  SSL_CHOSEN_ROLE=""
+  case "$detected" in
+    panel)
+      SSL_CHOSEN_ROLE=panel
+      ui_info "Using Panel paths under ${SSL_PANEL_CERT_DIR}"
+      ;;
+    node)
+      ui_warn "This server is a PasarGuard node."
+      ui_risk_gate node_cert "Replace the node certificate" || return 1
+      SSL_CHOSEN_ROLE=node
+      ;;
+    both|none)
+      [[ "$detected" == none ]] && ui_warn "PasarGuard Panel/Node not detected. Choose target paths:"
+      ui_menu choice "Install the certificate for:" \
+        "Panel only (recommended)" \
+        "Panel + Node (replaces the node certificate)" \
+        "Node only (replaces the node certificate)" || return 1
+      case "$choice" in
+        1) SSL_CHOSEN_ROLE=panel ;;
+        2) ui_risk_gate node_cert "Replace the node certificate" || return 1; SSL_CHOSEN_ROLE=both ;;
+        3) ui_risk_gate node_cert "Replace the node certificate" || return 1; SSL_CHOSEN_ROLE=node ;;
+        *) return 1 ;;
+      esac
+      ;;
+  esac
+  [[ -n "$SSL_CHOSEN_ROLE" ]]
+}
+
+_ssl_cf_token_ok() {
+  # Ask Cloudflare whether the API token is active (sent only to api.cloudflare.com)
+  local token="$1" resp
+  resp="$(curl -fsS --max-time 15 -H "Authorization: Bearer ${token}" \
+    https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null || true)"
+  [[ "$resp" == *'"status":"active"'* ]]
+}
+
+_ssl_choose_method() {
+  # Sets SSL_METHOD (http | dns_cf); for dns_cf also exports CF_Token
+  local choice token=""
+  SSL_METHOD=http
+  if _ssl_has_wildcard "${SSL_DOMAINS_ARR[@]}"; then
+    ui_info "Wildcard names need DNS-01 — using the Cloudflare DNS API."
+    SSL_METHOD=dns_cf
+  else
+    local hint="HTTP-01 on port 80 (recommended)"
+    if _ssl_behind_cloudflare "${SSL_DOMAINS_ARR[@]}"; then
+      ui_warn "Domain resolves to Cloudflare (orange cloud): HTTP-01 may not reach this server."
+      hint="HTTP-01 on port 80 (may fail behind the Cloudflare proxy)"
+    fi
+    ui_menu choice "Validation method:" \
+      "$hint" \
+      "DNS-01 via Cloudflare API token (works behind CDN, no port 80)" || return 1
+    [[ "$choice" == 2 ]] && SSL_METHOD=dns_cf
+  fi
+  [[ "$SSL_METHOD" == dns_cf ]] || return 0
+
+  if [[ -z "${CF_Token:-}" ]]; then
+    ui_info "Create a token at dash.cloudflare.com → My Profile → API Tokens"
+    ui_info "Permissions: Zone → DNS → Edit, Zone → Zone → Read (for this zone)"
+    ui_read_secret token "Cloudflare API token (input hidden)"
+    token="$(trim "$token")"
+  else
+    token="$CF_Token"
+  fi
+  if [[ ! "$token" =~ ^[A-Za-z0-9_-]{20,}$ ]]; then
+    ui_error "That does not look like a Cloudflare API token."
+    return 1
+  fi
+  if ! _ssl_cf_token_ok "$token"; then
+    ui_error "Cloudflare did not accept the token (inactive / wrong token)."
+    return 1
+  fi
+  ui_success "Cloudflare token is active (acme.sh stores it for renewals in its account.conf)"
+  export CF_Token="$token"
+  return 0
+}
+
 ssl_issue_interactive() {
   ui_step "SSL — Issue / Setup"
   if is_dry_run; then
@@ -963,58 +1303,27 @@ ssl_issue_interactive() {
     return 0
   fi
 
-  local detected role choice raw_domains email
+  local detected role raw_domains email
+  _ssl_load_config
   detected="$(_ssl_detect_role)"
   ui_info "Detected role: ${detected}"
-
-  case "$detected" in
-    panel)
-      role=panel
-      ui_info "Using Panel paths under ${SSL_PANEL_CERT_DIR}"
-      ;;
-    node)
-      role=node
-      ui_info "Using Node paths under ${SSL_NODE_CERT_DIR}"
-      ;;
-    both)
-      if ! ui_menu choice "This server looks like Panel + Node. Apply certs to:" \
-          "Panel only" \
-          "Node only" \
-          "Both (recommended)"; then
-        ui_info "Back."
-        return 0
-      fi
-      case "$choice" in
-        1) role=panel ;;
-        2) role=node ;;
-        3) role=both ;;
-        *) return 0 ;;
-      esac
-      ;;
-    none)
-      ui_warn "PasarGuard Panel/Node not detected. Choose target paths:"
-      if ! ui_menu choice "Install certificates for:" \
-          "Panel paths (/var/lib/pasarguard/certs)" \
-          "Node paths (/var/lib/pg-node/certs)" \
-          "Both"; then
-        ui_info "Back."
-        return 0
-      fi
-      case "$choice" in
-        1) role=panel ;;
-        2) role=node ;;
-        3) role=both ;;
-        *) return 0 ;;
-      esac
-      ;;
-  esac
+  if ! _ssl_choose_role "$detected"; then
+    ui_info "Back."
+    return 0
+  fi
+  role="$SSL_CHOSEN_ROLE"
 
   while true; do
-    ui_ask raw_domains "Domain(s) — space or comma separated" ""
+    ui_ask raw_domains "Domain(s) — space or comma separated" "${SSL_DOMAINS:-}"
     if _ssl_parse_domains_arg "$raw_domains"; then
       break
     fi
   done
+
+  if ! _ssl_choose_method; then
+    ui_warn "Cancelled."
+    return 0
+  fi
 
   while true; do
     ui_ask email "Email for Let's Encrypt (optional)" "${SSL_EMAIL:-}"
@@ -1024,7 +1333,12 @@ ssl_issue_interactive() {
   done
   SSL_EMAIL="$email"
 
-  if ! ui_confirm "Issue certificate for ${SSL_DOMAINS_ARR[*]} → role=${role}?" "Y"; then
+  SSL_STAGING_FIRST=0
+  if ui_confirm "Run a Let's Encrypt staging test first? (no rate limits, nothing installed)" "N"; then
+    SSL_STAGING_FIRST=1
+  fi
+
+  if ! ui_confirm "Issue certificate for ${SSL_DOMAINS_ARR[*]} → role=${role}, method=${SSL_METHOD}?" "Y"; then
     ui_warn "Cancelled."
     return 0
   fi
@@ -1041,9 +1355,38 @@ ssl_issue_interactive() {
 
   ui_success "Certificate installed and auto-renew enabled"
   ui_step "Updating Panel/Node .env paths"
-  _ssl_apply_env_paths "$role" "$SSL_PRIMARY"
+  if ! _ssl_apply_env_paths "$role" "$SSL_PRIMARY"; then
+    ui_error "Certificate is installed, but the panel was NOT switched to it (previous .env restored)."
+    _ssl_print_env_guide "$role" "$SSL_PRIMARY" "${SSL_DOMAINS_ARR[@]}"
+    return 1
+  fi
+  _ssl_verify_live "$SSL_PRIMARY" || true
   _ssl_print_env_guide "$role" "$SSL_PRIMARY" "${SSL_DOMAINS_ARR[@]}"
   return 0
+}
+
+_ssl_verify_live() {
+  # Check what users actually get: HAProxy (443) or the panel's own TLS port.
+  local primary="$1" cert host port rc=0 env="${SSL_PANEL_APP_DIR}/.env"
+  cert="${SSL_STATE_DIR}/live/fullchain.cer"
+  [[ -s "$cert" ]] || return 2
+  if _ssl_panel_behind_haproxy && have_cmd haproxy; then
+    local PROXY_LISTEN_HTTPS=""
+    kv_load_file "$PROXY_CONFIG_FILE" PROXY_LISTEN_HTTPS
+    host=127.0.0.1
+    port="${PROXY_LISTEN_HTTPS:-443}"
+  elif [[ -n "$(_ssl_env_get "$env" UVICORN_SSL_CERTFILE 2>/dev/null)" ]]; then
+    read -r host port <<<"$(_ssl_panel_endpoint "$env" 2>/dev/null)" || return 2
+    [[ -n "$port" ]] || return 2
+  else
+    return 2
+  fi
+  _ssl_verify_served_cert "$host" "$port" "$primary" "$cert" || rc=$?
+  case "$rc" in
+    0) ui_success "Live check: ${host}:${port} serves the current certificate" ;;
+    1) ui_error "Live check: ${host}:${port} does NOT serve the current certificate" ;;
+  esac
+  return "$rc"
 }
 
 ssl_status() {
@@ -1060,6 +1403,7 @@ ssl_status() {
   ui_kv "Primary" "${primary:-(none)}"
   ui_kv "Domains" "${domain_list:-(none)}"
   ui_kv "Key type" "${SSL_KEY_TYPE:-(unknown)}"
+  ui_kv "Method" "${SSL_METHOD:-http}"
   ui_kv "Config" "$SSL_CONFIG_FILE"
   ui_kv "Deploy hook" "$SSL_DEPLOY_HOOK"
   ui_kv "acme.sh" "$([[ -x $SSL_ACME_BIN ]] && echo OK || echo missing)"
@@ -1077,14 +1421,16 @@ ssl_status() {
         local -a status_doms=()
         read -r -a status_doms <<<"${domain_list:-$primary}"
         for f in "${status_doms[@]}"; do
-          if [[ -f "${SSL_PANEL_CERT_DIR}/${f}.cer" ]]; then
-            ui_success "Panel cert OK: ${SSL_PANEL_CERT_DIR}/${f}.cer"
+          local pc="${SSL_PANEL_CERT_DIR}/${f}/fullchain.pem"
+          [[ -f "$pc" ]] || pc="${SSL_PANEL_CERT_DIR}/${f}.cer"   # pre-0.7 layout
+          if [[ -f "$pc" ]]; then
+            ui_success "Panel cert OK: ${pc}"
             if have_cmd openssl; then
-              openssl x509 -in "${SSL_PANEL_CERT_DIR}/${f}.cer" -noout -dates 2>/dev/null \
+              openssl x509 -in "$pc" -noout -dates 2>/dev/null \
                 | while read -r line; do ui_kv "  $f" "$line"; done || true
             fi
           else
-            ui_warn "Missing panel cert: ${SSL_PANEL_CERT_DIR}/${f}.cer"
+            ui_warn "Missing panel cert: ${SSL_PANEL_CERT_DIR}/${f}/fullchain.pem"
           fi
         done
         ;;
@@ -1107,6 +1453,8 @@ ssl_status() {
   fi
 
   _ssl_report_post_hook || true
+  _ssl_report_node_cert_change || true
+  _ssl_verify_live "${primary:-}" >/dev/null 2>&1 && ui_success "Live: served certificate matches" || true
 
   # Cron presence
   if crontab -l 2>/dev/null | grep -q 'acme.sh'; then
@@ -1137,10 +1485,11 @@ ssl_renew_now() {
   local -a ecc=()
   mapfile -t ecc < <(_ssl_ecc_args "$SSL_PRIMARY")
   ui_info "Forcing renew for ${SSL_PRIMARY} (${ecc[*]:-rsa})..."
-  # Pass pre/post hooks so HAProxy (or peers) release :80 for HTTP-01
+  # HTTP-01: pre/post hooks so HAProxy (or peers) release :80. DNS-01: none.
+  local -a hooks=()
+  [[ "${SSL_METHOD:-http}" == "http" ]] && hooks=(--pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK")
   if ! PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" \
-       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force "${ecc[@]}" \
-       --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK"; then
+       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force "${ecc[@]}" "${hooks[@]}"; then
     ui_error "Renew failed — check DNS, port 80, and logs under ${SSL_ACME_HOME}"
     _ssl_report_post_hook || true
     ui_info "Tip: SSL → Repair auto-renew, then retry Renew now"
@@ -1154,6 +1503,9 @@ ssl_renew_now() {
     ui_error "Certificate renewed, but deploy failed (see messages above)"
     rc=1
   fi
+  local live=0
+  _ssl_verify_live "$SSL_PRIMARY" || live=$?
+  (( live == 1 )) && rc=1
   if (( rc != 0 )); then
     return 1
   fi
@@ -1180,7 +1532,8 @@ ssl_show_env_guide() {
   fi
   # Default N: avoid accidentally flipping panel back to direct TLS
   if ui_confirm "Re-apply certificate paths into Panel/Node .env now?" "N"; then
-    _ssl_apply_env_paths "${SSL_ROLE:-panel}" "$SSL_PRIMARY"
+    _ssl_apply_env_paths "${SSL_ROLE:-panel}" "$SSL_PRIMARY" \
+      || ui_error "Re-apply failed — previous .env kept"
   fi
   _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
 }
@@ -1236,6 +1589,70 @@ ssl_repair_autorenew() {
   return 0
 }
 
+_ssl_report_node_cert_change() {
+  local m="${SSL_STATE_DIR}/node-cert-changed"
+  [[ -f "$m" ]] || return 0
+  ui_warn "Node certificate changed on $(cat "$m") — paste ${SSL_NODE_CERT_DIR}/ssl_cert.pem into Panel → Nodes"
+  ui_info "SSL → Node certificate: show it, mark as pasted, or restore the original"
+  return 1
+}
+
+ssl_node_cert_menu() {
+  local choice cur="${SSL_NODE_CERT_DIR}/ssl_cert.pem"
+  _ssl_load_config
+  while true; do
+    ui_clear
+    ui_banner
+    ui_menu_title "SSL — Node certificate"
+    _ssl_report_node_cert_change || true
+    printf '  %s 1)%s Show current node certificate (paste into Panel → Nodes)\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 2)%s I pasted it in the panel (clear the warning)\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 3)%s Restore the original node certificate (stop deploying to the node)\n' "$C_ORANGE" "$C_RESET"
+    ui_menu_back_line
+    printf '%sSelect%s [0-3]: ' "$C_ORANGE" "$C_RESET"
+    ui_read choice
+    case "$(trim "${choice:-}")" in
+      1)
+        ui_clear
+        if [[ -f "$cur" ]]; then
+          cat "$cur"
+          have_cmd openssl && openssl x509 -in "$cur" -noout -subject -enddate -fingerprint -sha256 2>/dev/null
+        else
+          ui_warn "No node certificate at ${cur}"
+        fi
+        ui_pause
+        ;;
+      2) rm -f "${SSL_STATE_DIR}/node-cert-changed"; ui_success "Warning cleared"; sleep 1 ;;
+      3) ui_clear; ssl_node_restore_original; ui_pause ;;
+      0|b|B|back|Back) return 0 ;;
+      *) ui_warn "Invalid selection."; sleep 1 ;;
+    esac
+  done
+}
+
+ssl_node_restore_original() {
+  local cur="${SSL_NODE_CERT_DIR}/ssl_cert.pem" key="${SSL_NODE_CERT_DIR}/ssl_key.pem"
+  if [[ ! -f "${cur}.pre-pgclocktb" || ! -f "${key}.pre-pgclocktb" ]]; then
+    ui_warn "No original node certificate was saved (PGClockTB never replaced it)."
+    return 0
+  fi
+  ui_confirm "Restore the original node certificate and stop deploying to the node?" "N" || return 0
+  cp -a "${cur}.pre-pgclocktb" "$cur" && cp -a "${key}.pre-pgclocktb" "$key" || {
+    ui_error "Restore failed"; return 1; }
+  # Keep panel deployment if it was on; switch node deployment off
+  local new_role=none
+  [[ "${SSL_ROLE:-}" == "both" ]] && new_role=panel
+  local -a doms=()
+  read -r -a doms <<<"${SSL_DOMAINS:-$SSL_PRIMARY}"
+  if [[ -n "${SSL_PRIMARY:-}" ]]; then
+    _ssl_save_config "$new_role" "$SSL_PRIMARY" "${doms[@]}"
+  fi
+  _ssl_restart_compose /opt/pg-node "PasarGuard node"
+  date -u +%Y-%m-%dT%H:%M:%SZ >"${SSL_STATE_DIR}/node-cert-changed"
+  ui_success "Original node certificate restored (deploy role now: ${new_role})"
+  ui_warn "If the panel had the replaced certificate, paste the original back into Panel → Nodes."
+}
+
 ssl_menu_loop() {
   while true; do
     ui_clear
@@ -1246,9 +1663,10 @@ ssl_menu_loop() {
     printf '  %s 3)%s Renew now\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 4)%s Show .env / path instructions\n' "$C_ORANGE" "$C_RESET"
     printf '  %s 5)%s Repair auto-renew\n' "$C_ORANGE" "$C_RESET"
+    printf '  %s 6)%s Node certificate (show / restore original)\n' "$C_ORANGE" "$C_RESET"
     ui_menu_back_line
     local choice
-    printf '%sSelect%s [0-5]: ' "$C_ORANGE" "$C_RESET"
+    printf '%sSelect%s [0-6]: ' "$C_ORANGE" "$C_RESET"
     ui_read choice
     choice="$(trim "${choice:-}")"
     case "$choice" in
@@ -1257,6 +1675,7 @@ ssl_menu_loop() {
       3) ui_clear; ssl_renew_now; ui_pause ;;
       4) ui_clear; ssl_show_env_guide; ui_pause ;;
       5) ui_clear; ssl_repair_autorenew; ui_pause ;;
+      6) ssl_node_cert_menu ;;
       0|b|B|back|Back) return 0 ;;
       *) ui_warn "Invalid selection."; sleep 1 ;;
     esac

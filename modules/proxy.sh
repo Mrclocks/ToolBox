@@ -139,6 +139,7 @@ _proxy_sync_pem_from_ssl() {
   local panel_dir="${SSL_PANEL_CERT_DIR:-/var/lib/pasarguard/certs}"
   local -a pairs=(
     "${ssl_live}/fullchain.cer|${ssl_live}/key.pem|live"
+    "${panel_dir}/${domain}/fullchain.pem|${panel_dir}/${domain}/privkey.pem|named"
     "${panel_dir}/${domain}.cer|${panel_dir}/${domain}.cer.key|named"
     "/etc/letsencrypt/live/${domain}/fullchain.pem|/etc/letsencrypt/live/${domain}/privkey.pem|named"
   )
@@ -256,6 +257,7 @@ _proxy_prepare_panel_for_haproxy() {
   if declare -F _ssl_env_comment_key >/dev/null 2>&1; then
     _ssl_env_comment_key "$envf" "UVICORN_SSL_CERTFILE"
     _ssl_env_comment_key "$envf" "UVICORN_SSL_KEYFILE"
+    _ssl_env_comment_key "$envf" "UVICORN_SSL_CA_TYPE"
     _ssl_env_comment_key "$envf" "UVICORN_UDS"
   fi
   if declare -F _ssl_env_upsert >/dev/null 2>&1; then

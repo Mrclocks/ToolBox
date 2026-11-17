@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.7.0 — 2026-11-17
+
+### Fixed
+- **Node certificate could be replaced silently**: the panel pins node
+  certificates, so deploying a Let's Encrypt cert to a node broke panel↔node
+  (and again on every renewal). Default role is now Panel only; node roles need
+  a typed `YES`; the original is backed up; every change raises an alert;
+  SSL → Node certificate can restore the original and stop node deployment
+- **Panel could restart on a cert it cannot read / does not serve**: `.env` is
+  now a transaction — container mount check first, then restart, then the
+  served certificate must match (fingerprint), otherwise `.env` is restored
+
+### Changed
+- Panel files follow the official installer layout:
+  `certs/<domain>/fullchain.pem` + `privkey.pem`, `UVICORN_SSL_CA_TYPE = "public"`
+  (pre-0.7 `<domain>.cer` files are refreshed only if they exist)
+
+### Added
+- DNS-01 via Cloudflare API token (hidden input, verified with Cloudflare);
+  Cloudflare-proxied domains detected; wildcard names (`*.example.com`)
+- Reuse of an existing valid certificate (30+ days, all names) instead of a new
+  request; optional Let's Encrypt staging test in a throwaway cert home
+- Live check after issue / renew / in Status (HAProxy or panel TLS port)
+- Validation method saved (`SSL_METHOD`); DNS-01 renewals skip port-80 hooks
+
+### Notes
+- docs.pasarguard.org was not reachable from the build environment; paths and
+  `.env` keys were taken from the official PasarGuard repos (panel/node
+  `.env.example`, compose files, installer scripts)
+
+
 ## 0.6.0 — 2026-11-17
 
 ### Added

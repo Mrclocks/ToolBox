@@ -13,20 +13,54 @@ Short English reference for the categorized PGClockTB menus.
 
 | Item | Path |
 |------|------|
-| Panel cert | `/var/lib/pasarguard/certs/<domain>.cer` |
-| Panel key | `/var/lib/pasarguard/certs/<domain>.cer.key` |
+| Panel cert | `/var/lib/pasarguard/certs/<domain>/fullchain.pem` |
+| Panel key | `/var/lib/pasarguard/certs/<domain>/privkey.pem` |
 | Node cert | `/var/lib/pg-node/certs/ssl_cert.pem` |
 | Node key | `/var/lib/pg-node/certs/ssl_key.pem` |
 | Live copy | `/var/lib/pgclocktb/ssl/live/` |
 | HAProxy PEM | `/etc/haproxy/certs/<domain>.pem` |
 
+Paths follow the official PasarGuard installer (`/var/lib/pasarguard` is
+bind-mounted into the panel container). Files from older ToolBox versions
+(`<domain>.cer`) keep being refreshed only if they already exist.
+
 Menu:
 
-1. Issue / Setup — ask domains, enable auto-renew
-2. Status — expiry + cron check
-3. Renew now — force renew + redeploy
+1. Issue / Setup — role, domains, method, optional staging test, auto-renew
+2. Status — expiry, method, cron, live check, node-certificate alerts
+3. Renew now — force renew + redeploy + live check
 4. Show `.env` / path instructions
 5. Repair auto-renew — reinstall cron + deploy hook
+6. Node certificate — show it, mark as pasted, restore the original
+
+**Validation method**
+
+- **HTTP-01** (port 80, standalone) — default.
+- **DNS-01 via Cloudflare API** — for domains behind the Cloudflare proxy (orange
+  cloud is detected from the A record), when port 80 is closed, and required for
+  wildcards (`example.com *.example.com`). The token needs Zone → DNS → Edit and
+  Zone → Zone → Read; it is read hidden, checked with Cloudflare's
+  `tokens/verify`, and stored by acme.sh (`account.conf`) for renewals.
+
+**Rate limits** — an existing certificate that is valid for 30+ more days and
+lists every requested name is reused instead of requesting a new one. An
+optional **staging test** runs against the Let's Encrypt test CA in a throwaway
+directory first (nothing is installed).
+
+**Node certificates are pinned by the panel.** The node installer creates a
+self-signed certificate that you paste into Panel → Nodes. Replacing it (role
+Node / Panel + Node) breaks panel↔node until the new one is pasted — and again
+after every renewal. So the default role is **Panel only**, node roles need a
+typed `YES`, the original node certificate is kept as
+`ssl_cert.pem.pre-pgclocktb`, every change raises an alert in Status, and
+**Node certificate → Restore** puts the original back and stops node deployment.
+
+**Panel `.env` is applied as a transaction** — PGClockTB checks that the panel
+container mounts the certificate path, writes `UVICORN_SSL_CERTFILE`,
+`UVICORN_SSL_KEYFILE` and `UVICORN_SSL_CA_TYPE = "public"`, restarts, and then
+requires the panel to serve exactly the new certificate (`openssl s_client`
+fingerprint). If it does not, the previous `.env` is restored and the panel is
+restarted again.
 
 Preflight checks DNS (soft: all A/AAAA answers vs. every local address; behind
 NAT it says "cannot verify" instead of warning) and port **80**. If
@@ -44,8 +78,9 @@ State files (`ssl/config.env`, `proxy/config.env`) are plain `KEY=value` and are
 
 After **Issue / Setup**, PGClockTB **automatically** writes paths into:
 
-- Panel: `/opt/pasarguard/.env` → `UVICORN_SSL_CERTFILE`, `UVICORN_SSL_KEYFILE` only
-  (`UVICORN_PORT` is never changed; `UVICORN_UDS` is commented for direct TLS)
+- Panel: `/opt/pasarguard/.env` → `UVICORN_SSL_CERTFILE`, `UVICORN_SSL_KEYFILE`,
+  `UVICORN_SSL_CA_TYPE` (`UVICORN_PORT` is never changed; `UVICORN_UDS` is
+  commented for direct TLS)
 - Node: `/opt/pg-node/.env` (+ compose `SSL_CERT_FILE` / `SSL_KEY_FILE` when present)
 
 Then it restarts the matching docker compose stack when possible.
