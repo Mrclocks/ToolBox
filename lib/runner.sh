@@ -45,6 +45,8 @@ source_modules() {
   source "${PGCTB_ROOT}/modules/pgrestore.sh"
   # shellcheck disable=SC1091
   source "${PGCTB_ROOT}/modules/doctor.sh"
+  # shellcheck disable=SC1091
+  source "${PGCTB_ROOT}/modules/alerts.sh"
 }
 
 run_pipeline_all() {

@@ -216,7 +216,7 @@ lock_out="$(mktemp)"
 holder=$!
 sleep 1
 set +e
-timeout 90 bash install.sh --verify </dev/null >"$lock_out" 2>&1
+timeout 90 bash install.sh optimize low </dev/null >"$lock_out" 2>&1
 lock_rc=$?
 set -e
 kill "$holder" 2>/dev/null || true

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.0 — 2026-11-17
+
+### Added
+- **Telegram alerts** (Tools → Telegram alerts, `pgclock alerts check|test|status`):
+  panel/node/HAProxy/PGClockBackup down, disk, expiring certificate, failed
+  post-renew restart, node certificate changed; 6 h repeat, "Recovered"
+  messages, renewal announcements; systemd timer every 15 minutes
+- Proxy / custom API base for servers that cannot reach api.telegram.org
+- Token never logged or on a command line (curl stdin config), file 600
+
+### Changed
+- Read-only modes (`status`, `verify`, `doctor`, `portcheck`, `alerts check`,
+  `ssl status`, `proxy status`) no longer heal, reinstall, migrate or lock —
+  safe for unattended timers
+
+
 ## 0.9.0 — 2026-11-17
 
 ### Added

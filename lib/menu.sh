@@ -175,12 +175,14 @@ tools_menu_loop() {
     ui_banner
     ui_menu_title "Tools"
     _menu_item 1 "Undo PGClockTB changes (restore a backup run)" "$C_GREEN"
-    _menu_item 2 "Full custom wizard (asks every option, includes 🔴 items)"
+    _menu_item 2 "Telegram alerts (panel/node/HAProxy down, disk, certificates)"
+    _menu_item 3 "Full custom wizard (asks every option, includes 🔴 items)"
     ui_menu_back_line
-    _menu_read choice 2
+    _menu_read choice 3
     case "$choice" in
       1) ui_clear; questionnaire_restore_only && run_single restore && run_single report; ui_pause ;;
-      2)
+      2) alerts_menu_loop ;;
+      3)
         ui_clear
         ui_warn "The full wizard can include 🔴 SSH / UFW / abuse changes — each is asked explicitly."
         if questionnaire_all; then
@@ -208,7 +210,7 @@ menu_loop() {
     _menu_item 4 "Optimization  🟢 / 🟡"
     _menu_item 5 "Security      🔴 SSH · UFW · Abuse  🟡 Fail2Ban"
     _menu_item 6 "Backup & Restore"
-    _menu_item 7 "Tools (Undo · full wizard)"
+    _menu_item 7 "Tools (Undo · Telegram alerts · full wizard)"
     printf '  %s 0)%s Exit\n' "$C_YELLOW" "$C_RESET"
     ui_line 56 '-'
     _menu_read choice 7

@@ -404,6 +404,8 @@ Commands:
   (none)               Interactive menu
   status               Status report + verify, then exit
   doctor [--share]     Health check (PASS/WARN/FAIL); --share masks IPs/domains
+  alerts check|test|status
+                       Telegram alerts (check runs from the systemd timer)
   portcheck <host> "<ports>"
                        TCP test of another server FROM this one (run it on a
                        second server to test this one from outside)
@@ -519,6 +521,12 @@ parse_args() {
       PGCTB_MODE=doctor; shift
       [[ "${1-}" == "--share" ]] && { PGCTB_CMD_ARG=--share; shift; }
       ;;
+    alerts)
+      case "${2-}" in
+        check|test|status) PGCTB_MODE=alerts; PGCTB_CMD_ARG="$2"; shift 2 ;;
+        *) ui_error "alerts needs: check | test | status"; exit 1 ;;
+      esac
+      ;;
     portcheck)
       [[ -n "${2-}" && -n "${3-}" ]] || { ui_error 'portcheck needs: <host> "<ports>"'; exit 1; }
       PGCTB_MODE=portcheck; PGCTB_CMD_ARG="$2"; PGCTB_CMD_ARG2="$3"; shift 3
@@ -602,6 +610,15 @@ parse_args() {
   export PGCTB_DRY_RUN PGCTB_ROLLBACK_SECONDS
 }
 
+_pgctb_mode_mutates() {
+  case "$PGCTB_MODE" in
+    status|verify|doctor|portcheck) return 1 ;;
+    ssl|proxy) [[ "$PGCTB_CMD_ARG" == status ]] && return 1 ;;
+    alerts) [[ "$PGCTB_CMD_ARG" == check || "$PGCTB_CMD_ARG" == status || "$PGCTB_CMD_ARG" == test ]] && return 1 ;;
+  esac
+  return 0
+}
+
 main() {
   # Allow --help without root
   for __arg in "$@"; do
@@ -612,12 +629,18 @@ main() {
 
   require_root
   parse_args "$@"
+  # Read-only modes (status, doctor, alert checks run by a timer…) never heal,
+  # reinstall, migrate or take the lock — they must be safe to run unattended.
+  local mutating=0
+  if ! is_dry_run && _pgctb_mode_mutates; then
+    mutating=1
+  fi
   # One-time move of MrClock ToolBox (< 0.4.0) state/log/backup dirs
-  if ! is_dry_run && declare -F pgctb_migrate_legacy_dirs >/dev/null 2>&1; then
+  if (( mutating )) && declare -F pgctb_migrate_legacy_dirs >/dev/null 2>&1; then
     pgctb_migrate_legacy_dirs || ui_warn "Could not fully migrate legacy /var/*/securebox dirs (see log)"
   fi
-  # Never let two runs edit /etc at the same time (dry-run is read-only)
-  if ! is_dry_run; then
+  # Never let two runs edit /etc at the same time
+  if (( mutating )); then
     pgctb_lock_acquire || exit 1
   fi
   # sudo env_reset drops SSH_CONNECTION — recover before any IPv6/port/f2b logic
@@ -634,8 +657,8 @@ main() {
   detect_network_stack
   detect_dns_manager
 
-  # Dry-run: never heal, never install to /opt, never mutate firewall/state
-  if ! is_dry_run; then
+  # Dry-run / read-only: never heal, never install to /opt, never mutate state
+  if (( mutating )); then
     # Auto-heal outbound abuse blocks from older betas so re-runs / updates work
     if declare -F _abuse_repair_outbound >/dev/null 2>&1; then
       _abuse_repair_outbound
@@ -651,7 +674,7 @@ main() {
     if _pgctb_have_tree "${PGCTB_ROOT}"; then
       _pgctb_install_persistent "${PGCTB_ROOT}" 2>/dev/null || true
     fi
-  else
+  elif is_dry_run; then
     ui_warn "DRY-RUN: skipping heal / persistent install / all /etc writes"
   fi
 
@@ -699,6 +722,13 @@ main() {
       ;;
     doctor)
       module_doctor "$PGCTB_CMD_ARG" || exit 1
+      ;;
+    alerts)
+      case "$PGCTB_CMD_ARG" in
+        check) alerts_check || exit 1 ;;
+        test) alerts_send_test || exit 1 ;;
+        status) alerts_status ;;
+      esac
       ;;
     portcheck)
       # shellcheck disable=SC2086

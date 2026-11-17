@@ -43,6 +43,7 @@ sudo pgclock                      # interactive menu
 sudo pgclock status               # status report + verify
 sudo pgclock doctor [--share]     # health check PASS/WARN/FAIL (--share masks IPs/domains)
 sudo pgclock portcheck HOST "443 80"   # TCP test of HOST from this server
+sudo pgclock alerts test|check|status  # Telegram alerts
 sudo pgclock optimize low --yes   # 🟢 Safe level   (no prompts)
 sudo pgclock optimize mid         # 🟡 Balanced level (asks each network change)
 sudo pgclock ssl status|renew|repair
@@ -58,7 +59,7 @@ sudo pgclock --help               # all flags (legacy --one-click etc.)
 4. **Optimization** 🟢 / 🟡 — levels + individual items
 5. **Security** 🔴 SSH · UFW · abuse block, 🟡 Fail2Ban — one at a time
 6. **Backup & Restore** — PGClockBackup / PGClockMG
-7. **Tools** — Undo PGClockTB changes, full custom wizard
+7. **Tools** — Undo PGClockTB changes, Telegram alerts, full custom wizard
 
 ## Risk levels
 

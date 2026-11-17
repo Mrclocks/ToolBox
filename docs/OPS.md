@@ -184,3 +184,26 @@ outside, so PGClockTB does not ask a third-party service; instead:
   `sudo pgclock portcheck <this-host> "443 80 2222"` — or the printed bash
   one-liner where PGClockTB is not installed.
 
+## Telegram alerts
+
+Tools → Telegram alerts: bot token (hidden input), chat id, optional proxy and
+API base URL, then a test message and a systemd timer (`pgclocktb-alerts.timer`,
+every 15 minutes, `pgclock alerts check`).
+
+Alerts: panel / node container down, HAProxy down, PGClockBackup service down,
+disk ≥ 90 %, certificate expiring in < 14 days (renewal not working), services
+that did not restart after a renewal, node certificate changed. An open problem
+is repeated every 6 hours; a "Recovered" message is sent when it clears; every
+successful certificate renewal is announced once.
+
+The token is stored in `/var/lib/pgclocktb/alerts/telegram.env` (root, 600),
+never logged, and passed to curl through its stdin config (not visible in `ps`).
+
+**Servers in Iran** usually cannot reach `api.telegram.org`. Set a proxy (for
+example a local SOCKS inbound, `socks5h://127.0.0.1:1080`) or a relay URL you
+control as the API base.
+
+Read-only commands (`status`, `doctor`, `portcheck`, `alerts check`, `ssl status`,
+`proxy status`) never heal, reinstall, migrate or take the run lock, so the
+timer is safe to run unattended.
+
