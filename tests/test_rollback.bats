@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  securebox_test_dirs
   SECUREBOX_STATE_DIR="${BATS_TEST_TMPDIR}/state"
   SECUREBOX_BACKUP_ROOT="${BATS_TEST_TMPDIR}/bak"
   SECUREBOX_ROLLBACK_DIR="${SECUREBOX_STATE_DIR}/rollback"

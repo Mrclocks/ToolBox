@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  securebox_test_dirs
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/modules/proxy.sh"
   PROXY_STATE_DIR="${SECUREBOX_STATE_DIR}/proxy"

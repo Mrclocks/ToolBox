@@ -5,20 +5,28 @@ set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# bats < 1.4 (Ubuntu 22.04) has no BATS_TEST_TMPDIR: give every test its own
-# dir so state never leaks between tests via a shared /tmp path.
-if [[ -z "${BATS_TEST_TMPDIR:-}" ]]; then
-  BATS_TEST_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/bats-test.XXXXXX")"
+# Fresh state dirs for EVERY test. bats < 1.4 (Ubuntu 22.04) has no
+# BATS_TEST_TMPDIR and runs this file-level code once per FILE, so each test
+# file's setup() calls securebox_test_dirs first (harmless on new bats).
+_SB_OWN_TMPDIR=0
+if [[ -z "${BATS_TEST_TMPDIR:-}" || "${BATS_TEST_TMPDIR}" == "${SB_TEST_OWN_TMPDIR:-}" ]]; then
+  _SB_OWN_TMPDIR=1
 fi
-export BATS_TEST_TMPDIR
 
-# Minimal stubs so sourcing modules does not explode
-export SECUREBOX_ROOT="$REPO_ROOT"
-export SECUREBOX_BACKUP_ROOT="${BATS_TEST_TMPDIR:-/tmp}/securebox-bak"
-export SECUREBOX_LOG_DIR="${BATS_TEST_TMPDIR:-/tmp}/securebox-log"
-export SECUREBOX_STATE_DIR="${BATS_TEST_TMPDIR:-/tmp}/securebox-state"
-export SECUREBOX_RUN_ID="test-run"
-mkdir -p "$SECUREBOX_BACKUP_ROOT" "$SECUREBOX_LOG_DIR" "$SECUREBOX_STATE_DIR"
+securebox_test_dirs() {
+  if (( _SB_OWN_TMPDIR )); then
+    BATS_TEST_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/bats-test.XXXXXX")"
+    export SB_TEST_OWN_TMPDIR="$BATS_TEST_TMPDIR"
+  fi
+  export BATS_TEST_TMPDIR
+  export SECUREBOX_ROOT="$REPO_ROOT"
+  export SECUREBOX_BACKUP_ROOT="${BATS_TEST_TMPDIR}/securebox-bak"
+  export SECUREBOX_LOG_DIR="${BATS_TEST_TMPDIR}/securebox-log"
+  export SECUREBOX_STATE_DIR="${BATS_TEST_TMPDIR}/securebox-state"
+  export SECUREBOX_RUN_ID="test-run"
+  mkdir -p "$SECUREBOX_BACKUP_ROOT" "$SECUREBOX_LOG_DIR" "$SECUREBOX_STATE_DIR"
+}
+securebox_test_dirs
 
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/lib/common.sh"

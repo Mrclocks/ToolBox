@@ -3,6 +3,10 @@
 
 load helpers
 
+setup() {
+  securebox_test_dirs
+}
+
 @test "recover_ssh_env keeps existing SSH_CONNECTION" {
   export SSH_CONNECTION="1.2.3.4 1234 5.6.7.8 22"
   recover_ssh_env
