@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.0 — 2026-11-17
+
+### Fixed
+- **Remove HAProxy left the panel unreachable** (local HTTP only): the panel
+  `.env` from before the first setup is restored and the panel restarted
+- **Setup could leave a half-applied state**: config, panel `.env` and proxy
+  state are one transaction; failure at any step rolls all of them back
+
+### Added
+- Auto-detect panel port (moves a panel on 443/80 to 127.0.0.1:8000) and
+  domains from the SSL config — Enter accepts every default
+- Port preflight: refuses ports held by other processes (e.g. Xray on 443)
+- Verify through HAProxy after setup: panel reachable, unknown Host → 403
+- ACME route in HAProxy (`/.well-known/acme-challenge/` → acme.sh on a local
+  port): issue and renew no longer stop HAProxy; acme.sh domain conf switched
+  for cron renewals and switched back on Remove
+- `acme.sh --renew` path synced before every manual renew (renew ignores CLI hooks)
+
+### Tests
+- Real HAProxy test: ACME forwarding, panel through HAProxy, 403 for unknown
+  hosts; rollback and Remove covered; 146 tests
+
+
 ## 0.7.0 — 2026-11-17
 
 ### Fixed

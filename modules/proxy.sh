@@ -9,6 +9,9 @@ PROXY_HAPROXY_CERT_DIR="${PROXY_HAPROXY_CERT_DIR:-/etc/haproxy/certs}"
 PROXY_HAPROXY_CFG="${PROXY_HAPROXY_CFG:-/etc/haproxy/haproxy.cfg}"
 PROXY_HAPROXY_CFG_BAK="${PROXY_HAPROXY_CFG_BAK:-${PROXY_STATE_DIR}/haproxy.cfg.pre-mrclock}"
 PROXY_BIND_IPV6="${PROXY_BIND_IPV6:-auto}"  # auto | yes | no
+PROXY_PANEL_APP_DIR="${PROXY_PANEL_APP_DIR:-${SSL_PANEL_APP_DIR:-/opt/pasarguard}}"
+PROXY_PANEL_ENV_SNAPSHOT="${PROXY_PANEL_ENV_SNAPSHOT:-${PROXY_STATE_DIR}/panel.env.pre-haproxy}"
+PROXY_VERIFY_TRIES="${PROXY_VERIFY_TRIES:-20}"
 PROXY_HAPROXY_CFG_LAST="${PROXY_HAPROXY_CFG_LAST:-${PROXY_STATE_DIR}/haproxy.cfg.last}"
 
 # --- helpers ---------------------------------------------------------------
@@ -22,7 +25,7 @@ PROXY_CONFIG_KEYS=(
   PROXY_ENGINE PROXY_MODE PROXY_PANEL_DOMAIN PROXY_SUB_DOMAIN
   PROXY_BACKEND_HOST PROXY_BACKEND_PORT PROXY_LISTEN_HTTPS PROXY_LISTEN_HTTP
   PROXY_EXTRA_PORTS PROXY_EXTRA_PLAIN_PORTS
-  PROXY_REALITY_SNI PROXY_REALITY_BACKEND PROXY_FALLBACK_BACKEND
+  PROXY_REALITY_SNI PROXY_REALITY_BACKEND PROXY_FALLBACK_BACKEND PROXY_ACME_PORT
 )
 
 _proxy_save_config() {
@@ -53,6 +56,7 @@ _proxy_load_config() {
   PROXY_REALITY_SNI=""
   PROXY_REALITY_BACKEND="127.0.0.1:12000"
   PROXY_FALLBACK_BACKEND="127.0.0.1:11000"
+  PROXY_ACME_PORT="18080"
   kv_load_file "$PROXY_CONFIG_FILE" "${PROXY_CONFIG_KEYS[@]}"
 }
 
@@ -240,39 +244,97 @@ _proxy_print_panel_guide() {
 
 # Align panel .env with official single-port guide: local HTTP, no Uvicorn TLS.
 _proxy_prepare_panel_for_haproxy() {
+  # Panel → local HTTP behind HAProxy. The .env as it was BEFORE the first
+  # HAProxy setup is kept, so Remove can make the panel reachable again.
   local backend_host="${1:-127.0.0.1}"
   local backend_port="${2:-8000}"
-  local envf="/opt/pasarguard/.env"
-  [[ -d /opt/pasarguard ]] || {
-    ui_warn "/opt/pasarguard not found — set Panel Host/Port in the UI manually"
+  local envf="${PROXY_PANEL_APP_DIR}/.env"
+  [[ -d "$PROXY_PANEL_APP_DIR" ]] || {
+    ui_warn "${PROXY_PANEL_APP_DIR} not found — set Panel Host/Port in the UI manually"
     return 0
   }
   if [[ ! -f "$envf" ]]; then
     touch "$envf"
     chmod 600 "$envf"
-  elif declare -F backup_file >/dev/null 2>&1; then
-    backup_file "$envf" || true
+  else
+    backup_file "$envf" 2>/dev/null || true
+    if [[ ! -f "$PROXY_PANEL_ENV_SNAPSHOT" ]]; then
+      _proxy_ensure_state
+      cp -a "$envf" "$PROXY_PANEL_ENV_SNAPSHOT"
+    fi
   fi
 
-  if declare -F _ssl_env_comment_key >/dev/null 2>&1; then
-    _ssl_env_comment_key "$envf" "UVICORN_SSL_CERTFILE"
-    _ssl_env_comment_key "$envf" "UVICORN_SSL_KEYFILE"
-    _ssl_env_comment_key "$envf" "UVICORN_SSL_CA_TYPE"
-    _ssl_env_comment_key "$envf" "UVICORN_UDS"
-  fi
-  if declare -F _ssl_env_upsert >/dev/null 2>&1; then
-    _ssl_env_upsert "$envf" "UVICORN_HOST" "$backend_host" spaced
-    _ssl_env_upsert "$envf" "UVICORN_PORT" "$backend_port" bare
-  else
-    ui_warn "SSL helpers missing — edit ${envf} manually"
-    return 0
-  fi
+  local k
+  for k in UVICORN_SSL_CERTFILE UVICORN_SSL_KEYFILE UVICORN_SSL_CA_TYPE UVICORN_UDS; do
+    _ssl_env_comment_key "$envf" "$k"
+  done
+  _ssl_env_upsert "$envf" "UVICORN_HOST" "$backend_host" spaced
+  _ssl_env_upsert "$envf" "UVICORN_PORT" "$backend_port" bare
   ui_success "Panel .env prepared for HAProxy (local HTTP ${backend_host}:${backend_port}, SSL keys commented)"
-  if declare -F _ssl_restart_compose >/dev/null 2>&1; then
-    _ssl_restart_compose /opt/pasarguard "PasarGuard panel"
-  fi
+  _ssl_restart_compose "$PROXY_PANEL_APP_DIR" "PasarGuard panel"
 }
 
+_proxy_detect_panel_port() {
+  # Current panel port from .env (default 8000)
+  local p
+  p="$(_ssl_env_get "${PROXY_PANEL_APP_DIR}/.env" UVICORN_PORT 2>/dev/null || true)"
+  is_port "${p:-}" && printf '%s\n' "$p" || printf '8000\n'
+}
+
+_proxy_port_owner() {
+  # Process name listening on TCP PORT ("" = free)
+  local port="$1"
+  have_cmd ss || return 0
+  ss -tlnpH "sport = :${port}" 2>/dev/null \
+    | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -n1
+}
+
+_proxy_check_port_conflicts() {
+  # _proxy_check_port_conflicts PANEL_PORT_NOW PORT... → 1 when a port HAProxy
+  # needs is held by something else (the panel itself is moving away: allowed)
+  local panel_now="$1" p owner bad=0
+  shift
+  for p in "$@"; do
+    [[ -n "$p" ]] || continue
+    owner="$(_proxy_port_owner "$p")"
+    [[ -z "$owner" || "$owner" == haproxy ]] && continue
+    if [[ "$p" == "$panel_now" ]]; then
+      ui_info "Port ${p} is the panel's current port — the panel moves behind HAProxy"
+      continue
+    fi
+    ui_error "Port ${p} is already used by '${owner}' — HAProxy cannot listen there"
+    bad=1
+  done
+  if (( bad )); then
+    ui_info "Move that service (e.g. an Xray inbound on 443 → use Node mode / another port) and retry"
+    return 1
+  fi
+  return 0
+}
+
+_proxy_verify_through() {
+  # Through HAProxy: panel domain must answer (not 403/5xx), unknown Host must get 403
+  local domain="$1" port="$2" code wrong i
+  have_cmd curl || return 2
+  for ((i = 0; i < PROXY_VERIFY_TRIES; i++)); do
+    code="$(curl -sk -o /dev/null --max-time 8 -w '%{http_code}' \
+      --resolve "${domain}:${port}:127.0.0.1" "https://${domain}:${port}/" 2>/dev/null || true)"
+    if [[ "$code" =~ ^[1-4][0-9][0-9]$ && "$code" != 403 ]]; then
+      wrong="$(curl -sk -o /dev/null --max-time 8 -w '%{http_code}' \
+        --resolve "pgclocktb-check.invalid:${port}:127.0.0.1" \
+        "https://pgclocktb-check.invalid:${port}/" 2>/dev/null || true)"
+      if [[ "$wrong" == 403 ]]; then
+        ui_success "Verified via HAProxy: ${domain}:${port} → panel (HTTP ${code}); unknown host → 403"
+        return 0
+      fi
+      ui_error "Unknown Host got HTTP ${wrong:-none} instead of 403"
+      return 1
+    fi
+    sleep 2
+  done
+  ui_error "Panel not reachable through HAProxy on ${domain}:${port} (last HTTP ${code:-none})"
+  return 1
+}
 # --- HAProxy ---------------------------------------------------------------
 
 _proxy_warn_conflicts() {
@@ -373,6 +435,10 @@ EOF
     log-format "%ci:%cp [%tr] %ft %b/%s %TR/%Tw/%Tc/%Tr/%Ta %ST %B %CC %CS %tsc %ac/%fc/%bc/%sc/%rc %sq/%bq %hr %hs %{+Q}r %U"
     # Host may carry :port on non-default ports (e.g. 8443) — compare name only
     acl host_panel hdr(host),field(1,:) -i ${panel_domain}
+    # Let's Encrypt HTTP-01 goes to acme.sh on a local port — HAProxy is never
+    # stopped for issue/renew (no downtime)
+    acl acme_challenge path_beg /.well-known/acme-challenge/
+    use_backend acme if acme_challenge
 EOF
   if [[ -n "$sub_domain" && "$sub_domain" != "$panel_domain" ]]; then
     cat >>"$PROXY_HAPROXY_CFG" <<EOF
@@ -402,6 +468,10 @@ backend sub
     acl is_sub path_beg /sub/
     http-request deny if !is_sub
     server srv1 ${backend_host}:${backend_port}
+
+backend acme
+    mode http
+    server acme 127.0.0.1:${PROXY_ACME_PORT:-18080}
 
 backend deny_backend
     mode http
@@ -494,6 +564,144 @@ _proxy_haproxy_validate_and_start() {
   return 1
 }
 
+_proxy_setup_panel() {
+  local panel_domain sub_domain backend_host backend_port listen_https listen_http
+  local extra_ports extra_plain raw_ports panel_now ssl_domains d
+  local -a ssl_list=()
+
+  # --- auto-detect (answers become defaults; Enter accepts) ---
+  ssl_domains="$(_proxy_ssl_domains)"
+  read -r -a ssl_list <<<"$ssl_domains"
+  local def_panel="${PROXY_PANEL_DOMAIN:-${ssl_list[0]:-}}" def_sub="${PROXY_SUB_DOMAIN:-}"
+  if [[ -z "$def_sub" && ${#ssl_list[@]} -gt 1 ]]; then
+    for d in "${ssl_list[@]:1}"; do
+      [[ "$d" == \*.* ]] || { def_sub="$d"; break; }
+    done
+  fi
+  panel_now="$(_proxy_detect_panel_port)"
+  local def_backend="$panel_now"
+  # Panel directly on a public web port → move it to 8000 behind HAProxy
+  if [[ "$panel_now" == 443 || "$panel_now" == 80 ]]; then
+    def_backend=8000
+  fi
+  [[ -n "$ssl_domains" ]] && ui_info "From SSL config: ${ssl_domains}"
+  ui_info "Panel currently listens on port ${panel_now} (from ${PROXY_PANEL_APP_DIR}/.env)"
+
+  while true; do
+    ui_ask panel_domain "Panel domain" "$def_panel"
+    panel_domain="$(trim "${panel_domain,,}")"
+    _proxy_valid_domain "$panel_domain" && break
+    ui_warn "Invalid domain."
+  done
+  ui_ask sub_domain "Subscription domain (optional, Enter to skip)" "$def_sub"
+  sub_domain="$(trim "${sub_domain,,}")"
+  if [[ -n "$sub_domain" ]] && ! _proxy_valid_domain "$sub_domain"; then
+    ui_warn "Ignoring invalid sub domain."
+    sub_domain=""
+  fi
+  backend_host=127.0.0.1
+  ui_ask_port backend_port "Panel local port behind HAProxy" "$def_backend"
+  ui_ask_port listen_https "HTTPS listen port" "${PROXY_LISTEN_HTTPS:-443}"
+  ui_ask_port listen_http "HTTP listen port (plain, per docs — no redirect)" "${PROXY_LISTEN_HTTP:-80}"
+  ui_ask raw_ports "Extra HTTPS ports (optional, space-separated, e.g. 8443)" "${PROXY_EXTRA_PORTS:-}"
+  extra_ports="$(_proxy_clean_ports "$raw_ports" "$listen_https" "$listen_http")"
+  ui_ask raw_ports "Extra plain HTTP ports (optional, e.g. 9000)" "${PROXY_EXTRA_PLAIN_PORTS:-}"
+  # shellcheck disable=SC2086  # extra_ports is a validated digit list
+  extra_plain="$(_proxy_clean_ports "$raw_ports" "$listen_https" "$listen_http" $extra_ports)"
+
+  # --- preflight ---
+  local p
+  # shellcheck disable=SC2086
+  for p in "$listen_https" "$listen_http" $extra_ports $extra_plain "${PROXY_ACME_PORT:-18080}"; do
+    if [[ "$p" == "$backend_port" ]]; then
+      ui_error "Panel local port ${backend_port} collides with a HAProxy/ACME port (${p})."
+      return 1
+    fi
+  done
+  # shellcheck disable=SC2086
+  _proxy_check_port_conflicts "$panel_now" "$listen_https" "$listen_http" $extra_ports $extra_plain || return 1
+  if [[ "$backend_port" != "$panel_now" && -n "$(_proxy_port_owner "$backend_port")" ]]; then
+    ui_error "Port ${backend_port} is already in use by '$(_proxy_port_owner "$backend_port")'."
+    return 1
+  fi
+
+  if ! ui_confirm "Install HAProxy for ${panel_domain}${sub_domain:+ + $sub_domain} (panel → ${backend_host}:${backend_port})?" "Y"; then
+    ui_warn "Cancelled."
+    return 0
+  fi
+
+  _proxy_warn_conflicts
+  _proxy_install_haproxy || return 1
+
+  local -a cert_domains=("$panel_domain")
+  [[ -n "$sub_domain" ]] && cert_domains+=("$sub_domain")
+  if ! _proxy_ensure_certs_for_domains "${cert_domains[@]}"; then
+    ui_info "Tip: Main menu → SSL Certificates → Issue / Setup first"
+    return 1
+  fi
+
+  # --- apply as one transaction: haproxy.cfg + panel .env + proxy state ---
+  local was_active=0
+  systemctl is-active --quiet haproxy 2>/dev/null && was_active=1
+  safety_txn_begin "haproxy-panel" "$PROXY_HAPROXY_CFG" "${PROXY_PANEL_APP_DIR}/.env" "$PROXY_CONFIG_FILE" || return 1
+
+  _proxy_write_haproxy_panel_cfg \
+    "$panel_domain" "$sub_domain" "$backend_host" "$backend_port" \
+    "$listen_https" "$listen_http" "$extra_ports" "$extra_plain"
+  if ! _proxy_haproxy_validate_and_start; then
+    _proxy_rollback_panel "$was_active"
+    return 1
+  fi
+  _proxy_prepare_panel_for_haproxy "$backend_host" "$backend_port"
+
+  PROXY_ENGINE=haproxy
+  PROXY_MODE=panel
+  PROXY_PANEL_DOMAIN="$panel_domain"
+  PROXY_SUB_DOMAIN="$sub_domain"
+  PROXY_BACKEND_HOST="$backend_host"
+  PROXY_BACKEND_PORT="$backend_port"
+  PROXY_LISTEN_HTTPS="$listen_https"
+  PROXY_LISTEN_HTTP="$listen_http"
+  PROXY_EXTRA_PORTS="$extra_ports"
+  PROXY_EXTRA_PLAIN_PORTS="$extra_plain"
+  PROXY_ACME_PORT="${PROXY_ACME_PORT:-18080}"
+  _proxy_save_config
+
+  local vr=0
+  _proxy_verify_through "$panel_domain" "$listen_https" || vr=$?
+  if (( vr == 1 )); then
+    ui_error "Rolling back HAProxy setup (config, panel .env, state)"
+    _proxy_rollback_panel "$was_active"
+    return 1
+  fi
+  (( vr == 2 )) && ui_warn "curl missing — could not verify through HAProxy"
+  safety_txn_commit
+
+  # ACME renewals now go through HAProxy (no stop/start of HAProxy)
+  if declare -F _ssl_acme_switch_http >/dev/null 2>&1; then
+    _ssl_acme_switch_http haproxy "$PROXY_ACME_PORT" || true
+  fi
+
+  ui_success "HAProxy panel mode ready (docs-aligned listen front)"
+  _proxy_print_panel_guide "$backend_host" "$backend_port"
+  ui_info "Firewall tip: ufw allow ${listen_https}/tcp ; ufw allow ${listen_http}/tcp"
+  [[ -n "$extra_ports" ]] && ui_info "Also allow extra HTTPS: ${extra_ports}"
+  [[ -n "$extra_plain" ]] && ui_info "Also allow plain ports: ${extra_plain}"
+  return 0
+}
+
+_proxy_rollback_panel() {
+  local was_active="${1:-0}"
+  [[ -n "$PGCTB_TXN" ]] && safety_txn_rollback
+  if (( was_active )); then
+    systemctl restart haproxy >/dev/null 2>&1 || ui_warn "Restart haproxy manually"
+  else
+    systemctl stop haproxy >/dev/null 2>&1 || true
+  fi
+  _ssl_restart_compose "$PROXY_PANEL_APP_DIR" "PasarGuard panel"
+  ui_warn "Previous HAProxy config and panel .env restored"
+}
+
 proxy_setup_haproxy() {
   ui_step "Setup HAProxy"
   if is_dry_run; then
@@ -518,74 +726,8 @@ proxy_setup_haproxy() {
   esac
 
   if [[ "$mode" == "panel" ]]; then
-    while true; do
-      ui_ask panel_domain "Panel domain" "${PROXY_PANEL_DOMAIN:-}"
-      panel_domain="$(trim "${panel_domain,,}")"
-      if _proxy_valid_domain "$panel_domain"; then break; fi
-      ui_warn "Invalid domain."
-    done
-    ui_ask sub_domain "Subscription domain (optional, Enter to skip)" "${PROXY_SUB_DOMAIN:-}"
-    sub_domain="$(trim "${sub_domain,,}")"
-    if [[ -n "$sub_domain" ]] && ! _proxy_valid_domain "$sub_domain"; then
-      ui_warn "Ignoring invalid sub domain."
-      sub_domain=""
-    fi
-    while true; do
-      ui_ask backend_host "Panel backend host" "127.0.0.1"
-      backend_host="$(trim "$backend_host")"
-      if _proxy_valid_host "$backend_host"; then break; fi
-      ui_warn "Invalid host (use IPv4, localhost, or hostname)."
-    done
-    ui_ask_port backend_port "Panel backend port" "8000"
-    ui_ask_port listen_https "HTTPS listen port" "443"
-    ui_ask_port listen_http "HTTP listen port (plain, per docs — no redirect)" "80"
-    local extra_plain="" raw_ports
-    ui_ask raw_ports "Extra HTTPS ports (optional, space-separated, e.g. 8443)" "${PROXY_EXTRA_PORTS:-}"
-    extra_ports="$(_proxy_clean_ports "$raw_ports" "$listen_https" "$listen_http")"
-    ui_ask raw_ports "Extra plain HTTP ports (optional, e.g. 9000)" "${PROXY_EXTRA_PLAIN_PORTS:-}"
-    # shellcheck disable=SC2086  # extra_ports is a validated digit list
-    extra_plain="$(_proxy_clean_ports "$raw_ports" "$listen_https" "$listen_http" $extra_ports)"
-
-    if ! ui_confirm "Install HAProxy for ${panel_domain}${sub_domain:+ + $sub_domain}?" "Y"; then
-      ui_warn "Cancelled."
-      return 0
-    fi
-
-    _proxy_warn_conflicts
-    if ! _proxy_install_haproxy; then return 1; fi
-
-    local -a cert_domains=("$panel_domain")
-    [[ -n "$sub_domain" ]] && cert_domains+=("$sub_domain")
-    if ! _proxy_ensure_certs_for_domains "${cert_domains[@]}"; then
-      ui_info "Tip: Main menu → SSL Certificates → Issue / Setup first"
-      return 1
-    fi
-
-    _proxy_write_haproxy_panel_cfg \
-      "$panel_domain" "$sub_domain" "$backend_host" "$backend_port" \
-      "$listen_https" "$listen_http" "$extra_ports" "$extra_plain"
-
-    if ! _proxy_haproxy_validate_and_start; then return 1; fi
-
-    PROXY_ENGINE=haproxy
-    PROXY_MODE=panel
-    PROXY_PANEL_DOMAIN="$panel_domain"
-    PROXY_SUB_DOMAIN="$sub_domain"
-    PROXY_BACKEND_HOST="$backend_host"
-    PROXY_BACKEND_PORT="$backend_port"
-    PROXY_LISTEN_HTTPS="$listen_https"
-    PROXY_LISTEN_HTTP="$listen_http"
-    PROXY_EXTRA_PORTS="$extra_ports"
-    PROXY_EXTRA_PLAIN_PORTS="$extra_plain"
-    _proxy_save_config
-
-    ui_success "HAProxy panel mode ready (docs-aligned listen front)"
-    _proxy_prepare_panel_for_haproxy "$backend_host" "$backend_port"
-    _proxy_print_panel_guide "$backend_host" "$backend_port"
-    ui_info "Firewall tip: ufw allow ${listen_https}/tcp ; ufw allow ${listen_http}/tcp"
-    [[ -n "$extra_ports" ]] && ui_info "Also allow extra HTTPS: ${extra_ports}"
-    [[ -n "$extra_plain" ]] && ui_info "Also allow plain ports: ${extra_plain}"
-    return 0
+    _proxy_setup_panel
+    return $?
   fi
 
   # Node mode
@@ -683,6 +825,22 @@ proxy_remove() {
   if [[ -f "$PROXY_HAPROXY_CFG_BAK" ]]; then
     cp -a "$PROXY_HAPROXY_CFG_BAK" "$PROXY_HAPROXY_CFG"
     ui_info "Restored ${PROXY_HAPROXY_CFG}"
+  fi
+  # The panel was moved to local HTTP for HAProxy — give it back its own
+  # listener, or it is unreachable once HAProxy is gone.
+  if [[ "$PROXY_MODE" == "panel" ]]; then
+    if [[ -f "$PROXY_PANEL_ENV_SNAPSHOT" && -d "$PROXY_PANEL_APP_DIR" ]]; then
+      backup_file "${PROXY_PANEL_APP_DIR}/.env" 2>/dev/null || true
+      cp -a "$PROXY_PANEL_ENV_SNAPSHOT" "${PROXY_PANEL_APP_DIR}/.env"
+      rm -f "$PROXY_PANEL_ENV_SNAPSHOT"
+      _ssl_restart_compose "$PROXY_PANEL_APP_DIR" "PasarGuard panel"
+      ui_success "Panel .env restored to its pre-HAProxy state"
+    else
+      ui_warn "Panel still listens on local HTTP only — use SSL → Show .env → re-apply to serve TLS directly"
+    fi
+    if declare -F _ssl_acme_switch_http >/dev/null 2>&1; then
+      _ssl_acme_switch_http standalone || true
+    fi
   fi
   if [[ -f "$PROXY_CONFIG_FILE" ]]; then
     mv -f "$PROXY_CONFIG_FILE" "${PROXY_CONFIG_FILE}.removed.$(date +%Y%m%d%H%M%S)"

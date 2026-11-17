@@ -701,13 +701,62 @@ _ssl_ecc_args() {
   fi
 }
 
+_ssl_haproxy_acme_port() {
+  # Prints the local ACME port when ToolBox HAProxy routes /.well-known/acme-challenge
+  local PROXY_ACME_PORT=""
+  _ssl_panel_behind_haproxy || return 1
+  grep -q '^backend acme$' "${PROXY_HAPROXY_CFG:-/etc/haproxy/haproxy.cfg}" 2>/dev/null || return 1
+  systemctl is-active --quiet haproxy 2>/dev/null || return 1
+  kv_load_file "$PROXY_CONFIG_FILE" PROXY_ACME_PORT
+  is_port "${PROXY_ACME_PORT:-18080}" || return 1
+  printf '%s\n' "${PROXY_ACME_PORT:-18080}"
+}
+
 _ssl_method_args() {
-  # Fills SSL_METHOD_ARGS for acme.sh from SSL_METHOD (http | dns_cf)
+  # Fills SSL_METHOD_ARGS for acme.sh from SSL_METHOD (http | dns_cf).
+  # HTTP-01 behind ToolBox HAProxy: acme.sh listens on the local ACME port and
+  # HAProxy forwards the challenge → HAProxy keeps running (no downtime).
   SSL_METHOD_ARGS=()
+  local aport
   case "${SSL_METHOD:-http}" in
     dns_cf) SSL_METHOD_ARGS=(--dns dns_cf) ;;
-    *) SSL_METHOD_ARGS=(--standalone --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK") ;;
+    *)
+      if aport="$(_ssl_haproxy_acme_port)"; then
+        SSL_METHOD_ARGS=(--standalone --httpport "$aport")
+      else
+        SSL_METHOD_ARGS=(--standalone --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK")
+      fi
+      ;;
   esac
+}
+
+_ssl_acme_switch_http() {
+  # _ssl_acme_switch_http haproxy PORT | standalone
+  # Rewrites the saved acme.sh domain conf so CRON renewals use the same path:
+  # haproxy → Le_HTTPPort=PORT, no stop/start hooks; standalone → :80 + hooks.
+  local mode="$1" port="${2:-}" conf tmp n=0
+  _ssl_load_config
+  [[ -n "${SSL_PRIMARY:-}" && "${SSL_METHOD:-http}" == "http" ]] || return 0
+  _ssl_write_acme_port_hooks
+  for conf in "${SSL_ACME_HOME}/${SSL_PRIMARY}_ecc/${SSL_PRIMARY}.conf" \
+              "${SSL_ACME_HOME}/${SSL_PRIMARY}/${SSL_PRIMARY}.conf"; do
+    [[ -f "$conf" ]] || continue
+    grep -q "^Le_Webroot='no'" "$conf" || continue   # standalone HTTP-01 only
+    tmp="$(mktemp)"
+    grep -vE '^Le_HTTPPort=|^Le_PreHook=|^Le_PostHook=' "$conf" >"$tmp"
+    if [[ "$mode" == haproxy ]]; then
+      printf "Le_HTTPPort='%s'\n" "$port" >>"$tmp"
+    else
+      printf "Le_HTTPPort='80'\n" >>"$tmp"
+      printf "Le_PreHook='%s'\n" "$SSL_PRE_HOOK" >>"$tmp"
+      printf "Le_PostHook='%s'\n" "$SSL_POST_HOOK" >>"$tmp"
+    fi
+    cat "$tmp" >"$conf"
+    rm -f "$tmp"
+    n=$((n + 1))
+  done
+  (( n > 0 )) && ui_info "acme.sh renewals now use: ${mode}${port:+ (local port ${port})}"
+  return 0
 }
 
 _ssl_acme_cert_dir() {
@@ -793,7 +842,7 @@ _ssl_issue_cert() {
   local keyfile="${SSL_STATE_DIR}/live/key.pem"
   mkdir -p "${SSL_STATE_DIR}/live"
 
-  if [[ "${SSL_METHOD:-http}" == "http" ]]; then
+  if [[ "${SSL_METHOD:-http}" == "http" ]] && ! _ssl_haproxy_acme_port >/dev/null; then
     _ssl_preflight_issue "${domains[@]}" || return 1
   fi
   _ssl_write_acme_port_hooks
@@ -863,7 +912,12 @@ _ssl_issue_cert() {
     "$SSL_ACME_BIN" --install-cronjob >/dev/null 2>&1 || true
   fi
   if [[ "${SSL_METHOD:-http}" == "http" ]]; then
-    _ssl_register_acme_port_hooks "$primary" || true
+    local aport
+    if aport="$(_ssl_haproxy_acme_port)"; then
+      _ssl_acme_switch_http haproxy "$aport" || true
+    else
+      _ssl_register_acme_port_hooks "$primary" || true
+    fi
   fi
   return 0
 }
@@ -1486,8 +1540,18 @@ ssl_renew_now() {
   mapfile -t ecc < <(_ssl_ecc_args "$SSL_PRIMARY")
   ui_info "Forcing renew for ${SSL_PRIMARY} (${ecc[*]:-rsa})..."
   # HTTP-01: pre/post hooks so HAProxy (or peers) release :80. DNS-01: none.
+  # acme.sh --renew uses the hooks/port SAVED in the domain conf (CLI flags are
+  # ignored there), so sync the conf to the current HTTP-01 path first.
   local -a hooks=()
-  [[ "${SSL_METHOD:-http}" == "http" ]] && hooks=(--pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK")
+  if [[ "${SSL_METHOD:-http}" == "http" ]]; then
+    local aport
+    if aport="$(_ssl_haproxy_acme_port)"; then
+      _ssl_acme_switch_http haproxy "$aport" || true
+    else
+      _ssl_acme_switch_http standalone || true
+      hooks=(--pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK")
+    fi
+  fi
   if ! PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" \
        "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force "${ecc[@]}" "${hooks[@]}"; then
     ui_error "Renew failed — check DNS, port 80, and logs under ${SSL_ACME_HOME}"

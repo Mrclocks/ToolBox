@@ -94,22 +94,33 @@ local HTTP when HAProxy panel mode is detected).
 
 ## Reverse Proxy
 
-HAProxy only — aligned with [PasarGuard single-port](https://docs.pasarguard.org/en/learn/single-port/):
+HAProxy only — layout follows the PasarGuard single-port pattern (`listen
+front`, mode http, Host ACL, deny default, PEM dir).
 
-- **Panel mode** — `listen front`, mode http, Host ACL (`hdr(host),field(1,:)`
-  so `Host: domain:8443` still matches), deny default, PEM dir
-  `/etc/haproxy/certs/`, binds 443 SSL + 80 plain, plus optional extra SSL /
-  plain ports (none by default). Binds are dual-stack when the kernel has IPv6,
-  IPv4-only otherwise.
-  Every domain (panel + subscription) must have a certificate that really
-  covers it (checked with `openssl x509 -checkhost` and key match) or setup stops.
-  The config is validated with `haproxy -c` before it is saved; a bad write is
-  rolled back to the previous file.
-  No forced HTTP→HTTPS redirect (docs keep :80 working).
-  After setup, panel `.env` is switched to local HTTP (`UVICORN_HOST`/`PORT`, SSL keys commented).
-- **Node mode** — `listen front_node`, TCP/SNI, REALITY `send-proxy`, fallback backend
-- **Status / Remove** — stop HAProxy and restore prior config when backed up
-- Soft warning if another web server is already active on the host before setup
+**Panel mode — mostly automatic**
+
+- Domains come from the SSL config, the panel port from `/opt/pasarguard/.env`.
+  A panel that listens on 443/80 itself is moved to local `127.0.0.1:8000`.
+- Preflight refuses when 443 / 80 / extra ports belong to another process (for
+  example an Xray inbound on 443) or the panel port collides with a HAProxy port.
+- Every domain must have a certificate that really covers it.
+- Applied as one transaction (`haproxy.cfg` + panel `.env` + proxy state):
+  `haproxy -c`, start, panel switched to local HTTP, then a real HTTPS request
+  through HAProxy must reach the panel and an unknown Host must get **403**.
+  Otherwise everything is rolled back and services restarted.
+- Host ACL ignores `:port` (`hdr(host),field(1,:)`), so extra ports like 8443 work.
+- Binds are dual-stack when the kernel has IPv6, IPv4-only otherwise.
+- `/.well-known/acme-challenge/` is routed to acme.sh on a local port (default
+  `18080`), so certificate issue/renew **never stops HAProxy**; the acme.sh
+  domain conf is switched for cron renewals too.
+
+**Remove** stops HAProxy, restores the original `haproxy.cfg`, restores the
+panel `.env` saved before the first setup (so the panel is reachable again) and
+switches acme.sh renewals back to port 80.
+
+**Node mode** — `listen front_node`, TCP/SNI, REALITY `send-proxy`, fallback
+backend. Inbound ports live in the panel database, so they are still entered by
+hand.
 
 ## Backup / Restore & Migrate
 
