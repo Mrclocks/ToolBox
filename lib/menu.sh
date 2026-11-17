@@ -31,14 +31,30 @@ status_menu_loop() {
   while true; do
     ui_clear
     ui_banner
-    ui_menu_title "Status & Verify"
-    _menu_item 1 "Status report"
-    _menu_item 2 "Verify (sshd / ports / DNS / UFW / qdisc / sysctl)"
+    ui_menu_title "Status & Doctor"
+    _menu_item 1 "Doctor — full health check (PASS / WARN / FAIL)" "$C_GREEN"
+    _menu_item 2 "Doctor — shareable report (IPs / domains masked)"
+    _menu_item 3 "External port check (test this server from another one)"
+    _menu_item 4 "Check another server's ports from here"
+    _menu_item 5 "Status report"
+    _menu_item 6 "Verify (sshd / ports / DNS / UFW / qdisc / sysctl)"
     ui_menu_back_line
-    _menu_read choice 2
+    _menu_read choice 6
     case "$choice" in
-      1) ui_clear; run_single report; ui_pause ;;
-      2) ui_clear; run_single verify; ui_pause ;;
+      1) ui_clear; module_doctor || true; ui_pause ;;
+      2) ui_clear; module_doctor --share || true; ui_pause ;;
+      3) ui_clear; portcheck_guide; ui_pause ;;
+      4)
+        ui_clear
+        local host ports
+        ui_ask host "Host (IP or domain) to test" ""
+        ui_ask ports "Ports (space-separated)" "443 80"
+        # shellcheck disable=SC2086
+        portcheck_run "$(trim "$host")" $ports || true
+        ui_pause
+        ;;
+      5) ui_clear; run_single report; ui_pause ;;
+      6) ui_clear; run_single verify; ui_pause ;;
       0|b|B|back|Back) return 0 ;;
       *) _menu_invalid ;;
     esac
@@ -186,7 +202,7 @@ menu_loop() {
     ui_clear
     ui_banner
     ui_menu_title "Main menu"
-    _menu_item 1 "Status & Verify" "$C_GREEN"
+    _menu_item 1 "Status & Doctor" "$C_GREEN"
     _menu_item 2 "SSL Certificates"
     _menu_item 3 "Reverse Proxy (HAProxy)"
     _menu_item 4 "Optimization  🟢 / 🟡"

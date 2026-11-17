@@ -43,6 +43,8 @@ source_modules() {
   source "${PGCTB_ROOT}/modules/pgbackup.sh"
   # shellcheck disable=SC1091
   source "${PGCTB_ROOT}/modules/pgrestore.sh"
+  # shellcheck disable=SC1091
+  source "${PGCTB_ROOT}/modules/doctor.sh"
 }
 
 run_pipeline_all() {
@@ -120,6 +122,7 @@ run_single() {
     proxy) module_proxy ;;
     pgbackup) module_pgbackup ;;
     pgrestore) module_pgrestore ;;
+    doctor) module_doctor ;;
     *) ui_error "Unknown module: $name"; return 1 ;;
   esac
 }

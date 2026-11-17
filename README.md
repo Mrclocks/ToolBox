@@ -41,6 +41,8 @@ is not worth the risk, and Undo still finds them.
 ```bash
 sudo pgclock                      # interactive menu
 sudo pgclock status               # status report + verify
+sudo pgclock doctor [--share]     # health check PASS/WARN/FAIL (--share masks IPs/domains)
+sudo pgclock portcheck HOST "443 80"   # TCP test of HOST from this server
 sudo pgclock optimize low --yes   # 🟢 Safe level   (no prompts)
 sudo pgclock optimize mid         # 🟡 Balanced level (asks each network change)
 sudo pgclock ssl status|renew|repair
@@ -50,7 +52,7 @@ sudo pgclock --help               # all flags (legacy --one-click etc.)
 
 ## Menu
 
-1. **Status & Verify**
+1. **Status & Doctor** — health check, shareable report, external port check
 2. **SSL Certificates** — PasarGuard Panel/Node issue + auto-renew (acme.sh)
 3. **Reverse Proxy** — HAProxy single-port (panel/node)
 4. **Optimization** 🟢 / 🟡 — levels + individual items

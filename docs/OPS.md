@@ -159,3 +159,28 @@ Every change follows **Preflight → Snapshot → Apply → Verify → Rollback*
 - **CI** runs `scripts/scenario-smoke.sh` on a real VM (systemd, netfilter):
   real UFW/sshd/nft/MTU changes are applied and reverted.
 
+## Doctor & external port check
+
+`sudo pgclock doctor` (or Status & Doctor → Doctor) runs a **read-only** check
+and prints PASS / WARN / FAIL lines for: disk, memory, reboot-required, NTP;
+default route, DNS, outbound HTTPS; panel container, port, local HTTP answer;
+node container, service port, node certificate (and "changed" alerts);
+certificate expiry (<21 days WARN, <7 FAIL), acme.sh cron, failed post-hook,
+served-certificate match; HAProxy active / config valid / ports held; SSH
+listeners, `sshd -t`, UFW allows SSH, Fail2Ban, abuse-block admin allow rule;
+armed timed rollbacks. The exit status is non-zero when anything FAILs.
+A copy is saved under `/var/lib/pgclocktb/doctor/`.
+
+`sudo pgclock doctor --share` masks IPs, managed domains and e-mail addresses
+so the report can be posted for support. Secrets are never printed.
+
+**External port check.** A port open locally can still be blocked upstream
+(provider firewall, national filtering). The honest test is a connection from
+outside, so PGClockTB does not ask a third-party service; instead:
+
+- Status & Doctor → External port check prints the important ports of this
+  server and ready-to-run commands, and
+- on **another server you own** (ideally in your users' country) run
+  `sudo pgclock portcheck <this-host> "443 80 2222"` — or the printed bash
+  one-liner where PGClockTB is not installed.
+

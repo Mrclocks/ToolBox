@@ -403,6 +403,10 @@ Usage: sudo pgclock [command] [options]
 Commands:
   (none)               Interactive menu
   status               Status report + verify, then exit
+  doctor [--share]     Health check (PASS/WARN/FAIL); --share masks IPs/domains
+  portcheck <host> "<ports>"
+                       TCP test of another server FROM this one (run it on a
+                       second server to test this one from outside)
   optimize low|mid     Apply the 🟢 Safe or 🟡 Balanced level (add --yes without a TTY)
   ssl status|renew|repair
                        SSL certificate status / force renew / repair auto-renew
@@ -511,6 +515,14 @@ parse_args() {
   # Optional leading subcommand
   case "${1-}" in
     status) PGCTB_MODE=status; shift ;;
+    doctor)
+      PGCTB_MODE=doctor; shift
+      [[ "${1-}" == "--share" ]] && { PGCTB_CMD_ARG=--share; shift; }
+      ;;
+    portcheck)
+      [[ -n "${2-}" && -n "${3-}" ]] || { ui_error 'portcheck needs: <host> "<ports>"'; exit 1; }
+      PGCTB_MODE=portcheck; PGCTB_CMD_ARG="$2"; PGCTB_CMD_ARG2="$3"; shift 3
+      ;;
     optimize|optimise)
       case "${2-}" in
         low|mid) PGCTB_MODE=level; PGCTB_CMD_ARG="$2"; shift 2 ;;
@@ -684,6 +696,13 @@ main() {
       run_single report
       run_single verify
       ((${#PGCTB_FAILED_MODULES[@]} == 0)) || exit 1
+      ;;
+    doctor)
+      module_doctor "$PGCTB_CMD_ARG" || exit 1
+      ;;
+    portcheck)
+      # shellcheck disable=SC2086
+      portcheck_run "$PGCTB_CMD_ARG" $PGCTB_CMD_ARG2 || exit 1
       ;;
     level)
       ui_banner

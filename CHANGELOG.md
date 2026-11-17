@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.0 — 2026-11-17
+
+### Added
+- **Doctor** (`pgclock doctor`, Status & Doctor menu): read-only PASS / WARN /
+  FAIL report for system, network, panel, node, SSL, HAProxy, security and
+  PGClockTB itself; non-zero exit on FAIL; saved under `/var/lib/pgclocktb/doctor/`
+- `pgclock doctor --share`: IPs, managed domains and e-mails masked
+- **External port check** without a third party: menu prints this server's
+  important ports + ready commands; `pgclock portcheck <host> "<ports>"` tests
+  another server from here (run it on a second server to test this one)
+
+### Notes
+- A public multi-country checker (check-host.net) was considered but its API
+  could not be reached/verified from the build environment, so it is not
+  shipped; testing from your own second server is the reliable option
+
+
 ## 0.8.0 — 2026-11-17
 
 ### Fixed
