@@ -35,6 +35,14 @@ source_modules() {
   source "${SECUREBOX_ROOT}/modules/verify.sh"
   # shellcheck disable=SC1091
   source "${SECUREBOX_ROOT}/modules/report.sh"
+  # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/ssl.sh"
+  # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/proxy.sh"
+  # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/pgbackup.sh"
+  # shellcheck disable=SC1091
+  source "${SECUREBOX_ROOT}/modules/pgrestore.sh"
 }
 
 run_pipeline_all() {
@@ -108,6 +116,10 @@ run_single() {
     restore) module_restore ;;
     verify) module_verify ;;
     report) module_report ;;
+    ssl) module_ssl ;;
+    proxy) module_proxy ;;
+    pgbackup) module_pgbackup ;;
+    pgrestore) module_pgrestore ;;
     *) ui_error "Unknown module: $name"; return 1 ;;
   esac
 }

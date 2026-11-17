@@ -1,6 +1,10 @@
 #!/usr/bin/env bats
 load helpers
 
+setup() {
+  securebox_test_dirs
+}
+
 @test "is_dry_run respects SECUREBOX_DRY_RUN" {
   SECUREBOX_DRY_RUN=0
   run is_dry_run

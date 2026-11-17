@@ -1,6 +1,9 @@
 # MrClock ToolBox
 
-VPN hardening & optimization for **Ubuntu 22–26** and **Debian 12–13**.
+PasarGuard ops toolbox for **Ubuntu 22–26** and **Debian 12–13**:
+hardening, SSL, reverse proxy, and PGClockMG backup/restore bridges.
+
+Ops details: [docs/OPS.md](docs/OPS.md).
 
 ## Install
 
@@ -60,14 +63,34 @@ sudo mrclock --verify
 
 ## Features
 
+Categorized menu:
+
+1. **Optimization** — Apply All, DNS/MTU/BBR, UFW, SSH, Fail2Ban, abuse block, undo
+2. **SSL Certificates** — PasarGuard Panel/Node issue + auto-renew (acme.sh)
+3. **Reverse Proxy** — HAProxy single-port (panel/node)
+4. **Backup** — Install/open PGClockBackup (ToolBox UI → upstream installer)
+5. **Restore & Migrate** — PGClockMG wizard + redirect helpers
+
+Optimization details:
+
 - Apply All: **Automatic (low-risk)** or **Customize** — Plan screen + preflight first
 - DNS (live dig benchmark), MTU (default keep / MSS clamp), BBR
 - UFW autopilot, SSH hardening (`00-securebox.conf`), Fail2Ban
 - Optional abuse CIDR block (minimal / aggressive profiles)
 - Optional IPv6 disable (refuses if your SSH session is IPv6)
-- Restore previous configs + live MTU/sysctl/services/UFW state
+- Undo Toolbox Changes + live MTU/sysctl/services/UFW state
 - Verify module: `sshd -T`, `ss`, `resolvectl`, `ufw`, `tc`, sysctl
 - Timed auto-rollback for SSH/UFW/DNS/MTU unless you confirm
+
+SSL details:
+
+- Auto-detect Panel vs Node paths; multi-domain SAN
+- Preflight: DNS hint + port 80 check
+- Deploys to `/var/lib/pasarguard/certs/` and/or `/var/lib/pg-node/certs/`
+- Auto-writes Panel/Node `.env` certificate paths (and restarts compose)
+- Auto-renew via acme.sh cron + deploy hook (Repair menu if cron missing)
+
+Reverse proxy / backup: see [docs/OPS.md](docs/OPS.md).
 
 Rule #1: never lock out the admin or cut connectivity.
 

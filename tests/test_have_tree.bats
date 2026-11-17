@@ -4,6 +4,7 @@
 load helpers
 
 setup() {
+  securebox_test_dirs
   # Source only the helper from install.sh without running bootstrap
   _securebox_have_tree() {
     local root="$1"

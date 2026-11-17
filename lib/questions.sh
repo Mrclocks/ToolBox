@@ -38,7 +38,7 @@ ask_dns() {
   fi
 
   local choice=""
-  ui_menu choice "Choose DNS resolver (★ = fastest on this server)" "${labels[@]}"
+  ui_menu choice "Choose DNS resolver (★ = fastest on this server)" "${labels[@]}" || return 1
   choice="$(trim "$choice")"
   if ! is_uint "$choice" || (( choice < 1 || choice > ${#DNS_PRESETS[@]} )); then
     ui_error "Invalid DNS selection: '${choice}'"
@@ -127,7 +127,7 @@ ask_mtu() {
     "Conservative (1400)" \
     "Safe minimum (1280)" \
     "Custom MTU value" \
-    "Keep MTU + enable TCP MSS clamping (iptables/nft alternative)"
+    "Keep MTU + enable TCP MSS clamping (iptables/nft alternative)" || return 1
   SECUREBOX_ANSWERS[mtu_mss_clamp]=no
   case "$choice" in
     1) SECUREBOX_ANSWERS[mtu]=keep ;;
@@ -209,7 +209,7 @@ ask_ssh() {
   ui_menu choice "SSH port action" \
     "Change to recommended (${suggestion})" \
     "Change to custom port" \
-    "Keep current port (${current})"
+    "Keep current port (${current})" || return 1
   case "$choice" in
     1) SECUREBOX_ANSWERS[ssh_port]="$suggestion" ;;
     2)
@@ -251,7 +251,7 @@ ask_ssh() {
     "Keep distribution default" \
     "prohibit-password (keys only for root)" \
     "Disable root login" \
-    "Allow root login"
+    "Allow root login" || return 1
   case "$root_choice" in
     1) SECUREBOX_ANSWERS[ssh_permit_root]=keep ;;
     2) SECUREBOX_ANSWERS[ssh_permit_root]=prohibit-password ;;
@@ -266,7 +266,7 @@ ask_abuse() {
     local profile_choice
     ui_menu profile_choice "Abuse block profile" \
       "minimal — known bad / bulletproof hosting only (recommended)" \
-      "aggressive — also noisy VPS hosting slices (may block cloud clients)"
+      "aggressive — also noisy VPS hosting slices (may block cloud clients)" || return 1
     case "$profile_choice" in
       2) SECUREBOX_ANSWERS[abuse_profile]=aggressive ;;
       *) SECUREBOX_ANSWERS[abuse_profile]=minimal ;;
@@ -439,7 +439,7 @@ questionnaire_all() {
   local mode
   ui_menu mode "Apply All mode" \
     "Automatic — low-risk only (asks UFW & IPv6; keeps DNS/MTU/SSH port; no abuse block)" \
-    "Customize — ask me every option"
+    "Customize — ask me every option" || return 1
   case "$mode" in
     1)
       defaults_auto_all
@@ -474,12 +474,12 @@ questionnaire_all() {
       ui_step "Customize — only your yes answers will run"
       ask_update
       ask_timesync
-      ask_dns
-      ask_mtu
+      ask_dns || return 1
+      ask_mtu || return 1
       ask_bbr
-      ask_ssh
+      ask_ssh || return 1
       ask_ipv6
-      ask_abuse
+      ask_abuse || return 1
       ask_ufw
       ask_fail2ban
       ask_unattended
@@ -504,8 +504,8 @@ questionnaire_all() {
 }
 
 # Per-feature questionnaires (only what that feature needs)
-questionnaire_dns_only() { questionnaire_common_safety; ask_dns; review_answers; ui_confirm "Apply DNS now?" "Y"; }
-questionnaire_mtu_only() { questionnaire_common_safety; ask_mtu; review_answers; ui_confirm "Apply MTU now?" "Y"; }
+questionnaire_dns_only() { questionnaire_common_safety; ask_dns || return 1; review_answers; ui_confirm "Apply DNS now?" "Y"; }
+questionnaire_mtu_only() { questionnaire_common_safety; ask_mtu || return 1; review_answers; ui_confirm "Apply MTU now?" "Y"; }
 questionnaire_logs_only() {
   questionnaire_common_safety
   ask_logs
@@ -514,7 +514,7 @@ questionnaire_logs_only() {
 }
 questionnaire_ssh_only() {
   questionnaire_common_safety
-  ask_ssh
+  ask_ssh || return 1
   review_answers
   # ask_ssh already sets do_ssh from the user's yes/no
   if answered_yes do_ssh; then
@@ -532,7 +532,7 @@ questionnaire_ufw_only() {
   review_answers
   ui_confirm "Apply UFW now?" "Y"
 }
-questionnaire_abuse_only() { questionnaire_common_safety; ask_abuse; review_answers; ui_confirm "Apply abuse policy now?" "Y"; }
+questionnaire_abuse_only() { questionnaire_common_safety; ask_abuse || return 1; review_answers; ui_confirm "Apply abuse policy now?" "Y"; }
 questionnaire_ipv6_only() { questionnaire_common_safety; ask_ipv6; review_answers; ui_confirm "Apply IPv6 policy now?" "Y"; }
 questionnaire_unattended_only() { questionnaire_common_safety; ask_unattended; review_answers; ui_confirm "Apply unattended-upgrades now?" "Y"; }
 questionnaire_services_only() { questionnaire_common_safety; ask_services; review_answers; ui_confirm "Apply service cleanup now?" "Y"; }
@@ -596,7 +596,7 @@ ask_restore() {
   ui_warn "This restores DNS / MTU / SSH / UFW / Fail2Ban / sysctl / abuse configs."
   ui_warn "Does NOT undo apt upgrades or deleted logs."
   local choice
-  ui_menu choice "Select backup run to restore" "${labels[@]}"
+  ui_menu choice "Select backup run to restore" "${labels[@]}" || return 1
   if ! is_uint "$choice" || (( choice < 1 || choice > ${#runs[@]} )); then
     ui_error "Invalid selection"
     SECUREBOX_ANSWERS[do_restore]=no

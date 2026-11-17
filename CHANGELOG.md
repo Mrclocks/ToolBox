@@ -1,5 +1,134 @@
 # Changelog
 
+## 0.3.9 — 2026-11-17
+
+### Fixed
+- **PGClockMG / PGClockBackup install & uninstall always failed**: the installer
+  path was captured together with UI messages; messages now go to stderr
+- **HAProxy Host ACL** ignores `:port` — panel no longer returns 403 on extra
+  HTTPS ports (8443…) or non-default listen ports
+- **HAProxy PEMs**: a PEM is only built from a certificate that covers the
+  domain and whose key matches; setup fails if *any* domain lacks one
+- **Renew now** reports failure when the deploy hook fails (no more `|| true`);
+  deploy hook exits non-zero on failed copy / HAProxy reload / compose restart
+  and skips restarts when the certificate is unchanged (no double restart)
+- **ACME post-hook** retries restarting stopped proxies and records failures
+  (`acme-post-hook.failed`, syslog); Issue / Renew / Status surface it
+- **"Behind HAProxy" detection** no longer trusts commented `UVICORN_SSL_*`
+  lines (present in stock PasarGuard `.env`); uses ToolBox proxy config or the
+  ToolBox-managed `haproxy.cfg`
+- **ECC/RSA**: key type is saved; install-cert / renew / repair target the
+  certificate that was actually issued (no stale ECC fallback, no hidden errors)
+- **DNS preflight**: checks all A/AAAA answers against all local addresses and
+  reports "cannot verify" behind NAT instead of a false warning
+- HAProxy binds fall back to IPv4 when the kernel has no IPv6 (HAProxy used to
+  refuse to start); extra plain ports are dual-stack like the others
+- HAProxy config is validated before saving `config.env`; an invalid first-time
+  config is moved aside instead of being left in place
+- Extra HTTPS / plain ports default to none (were 8443 / 9000) and are validated
+
+### Security
+- `ssl/config.env` and `proxy/config.env` are parsed with an allow-list, never
+  `source`d (values with spaces or `$(...)` were executed — including from cron)
+- Let's Encrypt email is validated; deploy hook rejects invalid domains
+- Deploy hook writes HAProxy PEMs only when HAProxy is installed (configurable dir)
+- `ui_read` uses a dynamic fd instead of clobbering fd 3
+
+
+## 0.3.8 — 2026-10-20
+
+### Fixed
+- **SSL renew behind HAProxy**: ACME pre/post hooks temporarily stop/start
+  reverse proxies on :80 so HTTP-01 (and cron renew) works after HAProxy setup
+- **Renew / Show .env no longer undo HAProxy**: renew does not rewrite panel
+  `.env`; apply-env detects HAProxy panel mode and keeps `UVICORN_SSL_*` commented;
+  Show .env defaults to **N**
+
+### Security
+- **PGClockMG installer** pinned to release tag + SHA-256 verification (fail closed)
+- Wizard/Backup access prints **localhost URL** + token separately (no `?token=` in URL)
+  and adds SSH-tunnel / UFW guidance
+- HAProxy backend host / host:port inputs validated before writing config
+
+## 0.3.7 — 2026-10-20
+
+### Changed
+- **Reverse Proxy is HAProxy-only** — Caddy and Nginx setup paths removed from
+  menus, module code, docs, and tests (soft conflict warning if they are active)
+- **Menus**: every submenu shows `0) Back`; `ui_menu` cancels with Back
+- **Input**: `ui_read` uses `/dev/tty` + readline (`-e`) + `stty sane` so
+  clear/retype works correctly after wipe / under sudo / curl|bash
+
+## 0.3.6 — 2026-10-20
+
+### Fixed
+- **HAProxy panel config** aligned with PasarGuard single-port docs:
+  `listen front`, plain `:80` (no forced redirect), optional plain `:9000`,
+  Host ACL + `/sub/` gate + `deny_backend`
+- After HAProxy panel setup, auto-prepare panel `.env` for local HTTP
+  (comment `UVICORN_SSL_*`, set `UVICORN_HOST`/`PORT` to backend)
+- Node mode uses `listen front_node` + `bind *:` like the official example
+
+## 0.3.5 — 2026-10-20
+
+### Changed
+- SSL auto `.env` update no longer touches `UVICORN_PORT` (user decides)
+
+## 0.3.4 — 2026-10-20
+
+### Added
+- **SSL auto `.env` update**: after Issue/Renew, ToolBox replaces Panel
+  `UVICORN_SSL_*` in `/opt/pasarguard/.env` and Node
+  `SSL_CERT_FILE` / `SSL_KEY_FILE` in `/opt/pg-node/.env` (and compose),
+  then restarts compose when possible. Show `.env` can re-apply.
+  (`UVICORN_PORT` left alone as of 0.3.5)
+
+## 0.3.3 — 2026-10-20
+
+### Added
+- **Polish (Phase 4)**:
+  - SSL preflight (DNS soft-check + port 80 owner)
+  - SSL menu: Show `.env` instructions · Repair auto-renew
+  - Stronger Panel/Node detection (compose + docker image names)
+  - Reverse Proxy conflict warning (stop other engine on :443)
+  - PGClockMG Open ensures systemd service is started
+  - `docs/OPS.md` ops reference for SSL / Proxy / Backup
+
+## 0.3.2 — 2026-10-20
+
+### Added
+- **Backup / Restore & Migrate (Phase 3)** — ToolBox UI bridge to PGClockMG:
+  - Backup: Install/Update, Open URL + setup token, Status, Uninstall (PGClockBackup)
+  - Restore & Migrate: Install/Update wizard, Open URL + access token, Status,
+    Uninstall, Redirect server (3x-ui / Hiddify)
+  - Shared `lib/pgclockmg.sh` downloads upstream installer with
+    `PG_MIGRATOR_ACTION` / port / `PG_MIGRATOR_YES=1`
+
+## 0.3.1 — 2026-10-20
+
+### Added
+- **Reverse Proxy (Phase 2)**:
+  - HAProxy panel single-port (HTTPS + optional extra ports, Host ACL, deny default)
+  - HAProxy node TCP/SNI mode (REALITY `send-proxy` + fallback)
+  - Caddy auto-HTTPS reverse proxy
+  - Nginx reverse proxy using ToolBox/PasarGuard certificates
+  - Status / Remove with config backup restore
+  - End guide: set panel `.env` to local HTTP (no `UVICORN_SSL_*`)
+
+## 0.3.0 — 2026-10-20
+
+### Added
+- **Categorized main menu** (English): Optimization, SSL Certificates,
+  Reverse Proxy, Backup, Restore & Migrate
+- **SSL Certificates**: acme.sh issue, multi-domain (SAN), Panel/Node path
+  deploy, auto-renew cron + deploy hook, Status / Renew now
+- End-of-setup guide prints exact `.env` / compose `SSL_*` paths for Panel and Node
+- Scaffold menus for PGClockMG Backup / Restore & Migrate bridges
+
+### Changed
+- Toolbox undo renamed to **Undo Toolbox Changes** (under Optimization)
+  to avoid confusion with PasarGuard restore
+
 ## 0.2.3 — 2026-10-13
 
 ### Fixed

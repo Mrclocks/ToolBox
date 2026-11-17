@@ -137,6 +137,57 @@ is_port() {
   is_uint "${1-}" && (( $1 >= 1 && $1 <= 65535 ))
 }
 
+# --- safe KEY=VALUE state files ---------------------------------------------
+# State files are never `source`d: a value with spaces or $(...) would be run as
+# a command. Writers emit raw KEY=value lines; the loader only assigns keys from
+# an allow-list via printf -v (no eval).
+
+# kv_line KEY VALUE → prints KEY=VALUE with newlines/CR stripped from VALUE
+kv_line() {
+  local __k="$1" __v="${2-}"
+  __v="${__v//$'\r'/}"
+  __v="${__v//$'\n'/ }"
+  printf '%s=%s\n' "$__k" "$__v"
+}
+
+# kv_load_file FILE KEY... → assigns only the listed keys found in FILE
+kv_load_file() {
+  local __f="$1"
+  shift
+  [[ -f "$__f" ]] || return 0
+  local __line __key __val __ok __want
+  while IFS= read -r __line || [[ -n "$__line" ]]; do
+    [[ "$__line" =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ "$__line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    __key="${BASH_REMATCH[1]}"
+    __val="${BASH_REMATCH[2]}"
+    __ok=0
+    for __want in "$@"; do
+      [[ "$__want" == "$__key" ]] && { __ok=1; break; }
+    done
+    (( __ok )) || continue
+    # Legacy files quoted some values: strip one matching pair of quotes
+    if [[ "$__val" =~ ^\"(.*)\"$ ]] || [[ "$__val" =~ ^\'(.*)\'$ ]]; then
+      __val="${BASH_REMATCH[1]}"
+    fi
+    printf -v "$__key" '%s' "$__val"
+  done <"$__f"
+}
+
+# normalize_port_list "8443, 9000 x 8443" → "8443 9000" (valid, deduped)
+normalize_port_list() {
+  local raw="${1-}" p out=""
+  local -a parts=()
+  raw="${raw//,/ }"
+  read -r -a parts <<<"$raw"
+  for p in "${parts[@]}"; do
+    [[ "$p" =~ ^[1-9][0-9]{0,4}$ ]] && is_port "$p" || continue
+    [[ " $out " == *" $p "* ]] && continue
+    out+="${out:+ }$p"
+  done
+  printf '%s\n' "$out"
+}
+
 # Single port or UFW-style range (e.g. 1000:2000)
 is_port_spec() {
   local p="${1-}"

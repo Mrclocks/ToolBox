@@ -3,6 +3,10 @@
 
 load helpers
 
+setup() {
+  securebox_test_dirs
+}
+
 @test "gen-checksums packs ToolBox-<tag>/ prefix (one-liner layout)" {
   tag="$(tr -d '[:space:]' <"${REPO_ROOT}/VERSION")"
   run bash "${REPO_ROOT}/scripts/gen-checksums.sh"
