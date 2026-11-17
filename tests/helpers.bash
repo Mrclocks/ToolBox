@@ -24,6 +24,8 @@ mkdir -p "$PGCTB_BACKUP_ROOT" "$PGCTB_LOG_DIR" "$PGCTB_STATE_DIR"
 source "${REPO_ROOT}/lib/common.sh"
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/lib/ui.sh"
+# shellcheck disable=SC1091
+source "${REPO_ROOT}/lib/safety.sh"
 
 declare -gA PGCTB_ANSWERS=()
 

@@ -88,3 +88,28 @@ Bridges to [PGClockMG](https://github.com/Mrclocks/PGClockMG) with PGClockTB UI:
 Install downloads a **pinned release** of the upstream `install.sh` (SHA-256
 verified) and runs `PG_MIGRATOR_ACTION=install-backup|install-wizard` with your
 chosen port. Prefer SSH tunnel / UFW-restrict access; tokens are not put in URLs.
+
+## Safety core
+
+Every change follows **Preflight → Snapshot → Apply → Verify → Rollback**.
+
+- **One run at a time** — `/run/pgclocktb.lock`; a second run exits instead of
+  racing `/etc` edits (dry-run is read-only and not locked).
+- **Admin IPs are never blocked** — your SSH client IP, other `who --ips`
+  sessions and `PGCTB_ADMIN_IPS="1.2.3.4 5.6.7.8"` get an explicit allow rule
+  *before* the abuse drop rule. Without a known admin IP the blocklist asks
+  (TTY) or refuses (no TTY).
+- **Verify with real traffic** — MTU changes are checked with an HTTPS fetch
+  (DNS + TCP + TLS, i.e. large packets) before and after; if it worked before
+  and fails after, the live MTU, the `.link` file and NetworkManager are
+  reverted immediately. DNS already validates with `dig` and restores.
+- **IPv6-only hosts** — disabling IPv6 is refused when there is no IPv4 default route.
+- **Risk levels** — 🟢 low: update, timesync, BBR, logs, unattended ·
+  🟡 mid: DNS, MTU, IPv6, services, Fail2Ban · 🔴 high: SSH, UFW, abuse block.
+  Unknown modules count as high.
+- **Existing guards kept** — UFW never enables without SSH allow rules; password
+  login is never disabled without a usable SSH key; IPv6 disable refuses over an
+  IPv6 SSH session; timed rollback for SSH/UFW/DNS/MTU on a TTY.
+- **CI** runs `scripts/scenario-smoke.sh` on a real VM (systemd, netfilter):
+  real UFW/sshd/nft/MTU changes are applied and reverted.
+

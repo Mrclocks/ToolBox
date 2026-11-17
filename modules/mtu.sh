@@ -82,28 +82,56 @@ module_mtu() {
     return 0
   fi
 
-  if apply_persistent_mtu "$iface" "$mtu"; then
-    local now
-    now="$(iface_mtu "$iface" || echo "?")"
-    if ! network_has_default_route; then
-      module_fail "mtu" "default route lost after MTU change"
-      confirm_continue_on_error "mtu" "gateway lost" || return 1
-      return 0
-    fi
-    # Arm timed rollback if requested
-    local rollback_secs="${PGCTB_ROLLBACK_SECONDS:-120}"
-    if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
-      if declare -F schedule_timed_rollback >/dev/null 2>&1; then
-        schedule_timed_rollback "mtu" "$rollback_secs" || true
-      fi
-      if ui_confirm "MTU applied — confirm connectivity still works (cancel auto-rollback)?" "Y"; then
-        cancel_timed_rollback "mtu" || true
-      fi
-    fi
-    module_ok "mtu"
-    ui_success "MTU set to ${now} on ${iface} (addressing untouched)"
-  else
-    module_fail "mtu" "failed to apply MTU"
-    confirm_continue_on_error "mtu" "MTU apply failed" || return 1
+  # Verify-or-revert: probe real HTTPS (large TLS packets) before and after.
+  local old_mtu nm_conn="" probe_before=0
+  old_mtu="$(iface_mtu "$iface" || echo "")"
+  if [[ "$NET_STACK" == "networkmanager" ]] && have_cmd nmcli; then
+    nm_conn="$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null \
+      | awk -F: -v d="$iface" '$2==d{print $1; exit}')"
   fi
+  safety_internet_ok || probe_before=$?
+  safety_txn_begin "mtu" "/etc/systemd/network/10-securebox-${iface}.link" || true
+
+  if ! apply_persistent_mtu "$iface" "$mtu"; then
+    _mtu_revert "$iface" "$old_mtu" "$nm_conn"
+    module_fail "mtu" "failed to apply MTU — reverted to ${old_mtu:-previous}"
+    confirm_continue_on_error "mtu" "MTU apply failed" || return 1
+    return 0
+  fi
+  if ! network_has_default_route \
+      || ! safety_verify_or_revert "MTU ${mtu}" "$probe_before" _mtu_revert "$iface" "$old_mtu" "$nm_conn"; then
+    network_has_default_route || _mtu_revert "$iface" "$old_mtu" "$nm_conn"
+    module_fail "mtu" "connectivity check failed at MTU ${mtu} — reverted to ${old_mtu:-previous}"
+    confirm_continue_on_error "mtu" "MTU reverted" || return 1
+    return 0
+  fi
+  safety_txn_commit
+  local now
+  now="$(iface_mtu "$iface" || echo "?")"
+  # Arm timed rollback if requested
+  local rollback_secs="${PGCTB_ROLLBACK_SECONDS:-120}"
+  if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
+    if declare -F schedule_timed_rollback >/dev/null 2>&1; then
+      schedule_timed_rollback "mtu" "$rollback_secs" || true
+    fi
+    if ui_confirm "MTU applied — confirm connectivity still works (cancel auto-rollback)?" "Y"; then
+      cancel_timed_rollback "mtu" || true
+    fi
+  fi
+  module_ok "mtu"
+  ui_success "MTU set to ${now} on ${iface} (addressing untouched)"
+}
+
+_mtu_revert() {
+  # _mtu_revert IFACE OLD_MTU [NM_CONNECTION] — live value + files + NM setting
+  local iface="$1" old="$2" conn="${3:-}"
+  [[ -n "$old" ]] && ip link set dev "$iface" mtu "$old" 2>/dev/null
+  [[ -n "$PGCTB_TXN" ]] && safety_txn_rollback
+  if [[ -n "$conn" && -n "$old" ]] && have_cmd nmcli; then
+    nmcli connection modify "$conn" 802-3-ethernet.mtu "$old" 2>/dev/null \
+      || nmcli connection modify "$conn" ethernet.mtu "$old" 2>/dev/null || true
+    nmcli device reapply "$iface" >/dev/null 2>&1 || true
+  fi
+  [[ -n "$old" ]] && ip link set dev "$iface" mtu "$old" 2>/dev/null
+  ui_warn "MTU on ${iface} reverted to ${old:-previous value}"
 }

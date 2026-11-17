@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'cursor/**']
+    branches: [main, 'cursor/**', 'claude/**']
   pull_request:
     branches: [main]
 
@@ -77,3 +77,15 @@ jobs:
           bash -n modules/ufw.sh
           bash -n modules/ssh.sh
           bash -c 'source lib/common.sh; is_port 22; is_ipv4 1.2.3.4; ! is_ipv4 08.1.1.1'
+
+  vm-scenario:
+    # Real VM (systemd, root, real netfilter): applies AND reverts real changes
+    name: VM scenario (real system)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats shellcheck dnsutils
+      - name: Scenario smoke
+        run: sudo bash scripts/scenario-smoke.sh "$GITHUB_WORKSPACE"

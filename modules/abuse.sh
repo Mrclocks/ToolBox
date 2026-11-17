@@ -50,6 +50,34 @@ _abuse_resolve_file() {
   esac
 }
 
+_abuse_protect_admin() {
+  # Fill ABUSE_ADMIN_IPS (always accepted before the drop rule) and report any
+  # admin IP that falls inside a blocked range. Returns 1 to refuse the change.
+  ABUSE_ADMIN_IPS=()
+  mapfile -t ABUSE_ADMIN_IPS < <(pgctb_admin_ips)
+  if ((${#ABUSE_ADMIN_IPS[@]} == 0)); then
+    ui_warn "Could not detect your admin IP (no SSH_CONNECTION / who --ips)."
+    ui_info "Set it explicitly to be safe: PGCTB_ADMIN_IPS=\"1.2.3.4\" pgclock"
+    if have_tty; then
+      ui_confirm "Apply the blocklist without an admin-IP exception?" "N" || return 1
+      return 0
+    fi
+    return 1
+  fi
+  ui_info "Admin IPs always allowed: ${ABUSE_ADMIN_IPS[*]}"
+  local a c
+  for a in "${ABUSE_ADMIN_IPS[@]}"; do
+    is_ipv4 "$a" || continue
+    for c in "${CIDRS[@]}"; do
+      if ipv4_in_cidr "$a" "$c"; then
+        ui_warn "Your admin IP ${a} is inside blocked range ${c} — kept reachable by an explicit allow rule."
+        break
+      fi
+    done
+  done
+  return 0
+}
+
 _abuse_ensure_nft_or_iptables() {
   if have_cmd nft; then
     ABUSE_BACKEND=nft
@@ -81,7 +109,7 @@ _abuse_apply_nft() {
   local i=0
   for c in "${cidrs[@]}"; do
     chunk+=("$c")
-    ((i++))
+    i=$((i + 1))
     if (( i % 40 == 0 )); then
       if nft add element inet securebox abuse4 "{ $(IFS=,; echo "${chunk[*]}") }" 2>/dev/null; then
         loaded=$((loaded + ${#chunk[@]}))
@@ -125,6 +153,15 @@ _abuse_apply_nft() {
 
   # Allow replies to our outbound connections BEFORE dropping abuse sources
   nft add rule inet securebox input ct state established,related accept
+  # Admin IPs are always accepted first — a blocklist must never lock you out
+  local a
+  for a in "${ABUSE_ADMIN_IPS[@]}"; do
+    if is_ipv4 "$a"; then
+      nft add rule inet securebox input ip saddr "$a" accept
+    else
+      nft add rule inet securebox input ip6 saddr "$a" accept 2>/dev/null || true
+    fi
+  done
   # Inbound only drop from abuse set
   nft add rule inet securebox input ip saddr @abuse4 drop
 
@@ -162,6 +199,11 @@ _abuse_apply_iptables() {
   iptables -A PGCTB_ABUSE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
     || iptables -A PGCTB_ABUSE -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
     || true
+  # Admin IPs are always accepted first — a blocklist must never lock you out
+  local a
+  for a in "${ABUSE_ADMIN_IPS[@]}"; do
+    is_ipv4 "$a" && iptables -A PGCTB_ABUSE -s "$a" -j ACCEPT 2>/dev/null
+  done
 
   local c
   for c in "${cidrs[@]}"; do
@@ -286,6 +328,11 @@ module_abuse() {
 
   local profile="${PGCTB_ANSWERS[abuse_profile]:-minimal}"
   ui_info "Loaded ${#CIDRS[@]} CIDR ranges from $(basename "$file") [profile=${profile}]"
+  if ! _abuse_protect_admin; then
+    module_fail "abuse" "refused: admin IP unknown and no TTY to confirm"
+    confirm_continue_on_error "abuse" "admin IP unknown" || return 1
+    return 0
+  fi
   _abuse_harden_services
 
   if ! _abuse_ensure_nft_or_iptables; then

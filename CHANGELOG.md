@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 — 2026-11-17
+
+### Added — safety core (`lib/safety.sh`)
+- Single-run lock (`/run/pgclocktb.lock`): concurrent runs are refused
+- Admin-IP discovery (SSH session, `who --ips`, `PGCTB_ADMIN_IPS`)
+- Risk levels per module (low / mid / high; unknown = high)
+- File transactions: exact snapshot/restore, including files that did not exist
+- Real connectivity probe (route + HTTPS) and verify-or-revert helper
+
+### Fixed
+- **Abuse block could lock out the admin**: admin IPs now get an explicit allow
+  rule before the drop rule (nft + iptables, persisted); a warning names any
+  admin IP inside a blocked range; refuses when the admin IP is unknown and
+  there is no TTY to confirm
+- **MTU left a broken value in place** when the default route was lost; now the
+  live MTU, `.link` file and NetworkManager setting are reverted immediately,
+  also when an HTTPS probe fails after the change but worked before
+- **IPv6 disable on IPv6-only hosts** (no IPv4 default route) is refused
+- `((i++))` in abuse apply aborted under `set -e`
+
+### CI
+- New **VM scenario** job runs `scripts/scenario-smoke.sh` as root on a real
+  runner VM (adds admin-IP rule order and lock checks); CI also runs on `claude/**`
+
+
 ## 0.4.0 — 2026-11-17
 
 Roadmap to 1.0.0: 0.4 rename · 0.5 safety core · 0.6 menus & levels ·

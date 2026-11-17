@@ -377,6 +377,8 @@ source "${PGCTB_ROOT}/lib/os.sh"
 # shellcheck disable=SC1091
 source "${PGCTB_ROOT}/lib/net.sh"
 # shellcheck disable=SC1091
+source "${PGCTB_ROOT}/lib/safety.sh"
+# shellcheck disable=SC1091
 source "${PGCTB_ROOT}/lib/questions.sh"
 # shellcheck disable=SC1091
 source "${PGCTB_ROOT}/lib/rollback.sh"
@@ -731,6 +733,10 @@ main() {
   # One-time move of MrClock ToolBox (< 0.4.0) state/log/backup dirs
   if ! is_dry_run && declare -F pgctb_migrate_legacy_dirs >/dev/null 2>&1; then
     pgctb_migrate_legacy_dirs || ui_warn "Could not fully migrate legacy /var/*/securebox dirs (see log)"
+  fi
+  # Never let two runs edit /etc at the same time (dry-run is read-only)
+  if ! is_dry_run; then
+    pgctb_lock_acquire || exit 1
   fi
   # sudo env_reset drops SSH_CONNECTION — recover before any IPv6/port/f2b logic
   if declare -F recover_ssh_env >/dev/null 2>&1; then

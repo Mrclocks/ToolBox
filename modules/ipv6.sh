@@ -33,6 +33,14 @@ module_ipv6() {
     return 0
   fi
 
+  # IPv6-only hosts (no IPv4 default route) would lose ALL connectivity
+  if ! safety_has_ipv4_default_route; then
+    ui_error "This server has no IPv4 default route — disabling IPv6 would cut it off completely."
+    module_fail "ipv6" "refused: host has no IPv4 default route"
+    confirm_continue_on_error "ipv6" "IPv6-only host — skipped" || return 1
+    return 0
+  fi
+
   if _ipv6_ssh_session_is_v6; then
     ui_error "Current SSH session is over IPv6 — disabling IPv6 would lock you out."
     if have_tty; then

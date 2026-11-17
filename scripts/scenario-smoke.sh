@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Container / local scenario smoke tests for v0.2.0 acceptance criteria.
-# Run as root inside Ubuntu 24.04 (or similar) with the repo mounted at /src.
+# Real-system scenario tests (root): applies and reverts real changes.
+# Runs in CI on an ephemeral GitHub runner VM (real systemd), or by hand as
+# root on a throwaway Ubuntu/Debian VM:  sudo bash scripts/scenario-smoke.sh "$PWD"
 set -euo pipefail
 
 SRC="${1:-/src}"
@@ -56,6 +57,8 @@ ufw --force disable >/dev/null 2>&1 || true
 source lib/common.sh
 # shellcheck disable=SC1091
 source lib/ui.sh
+# shellcheck disable=SC1091
+source lib/safety.sh
 # shellcheck disable=SC1091
 source modules/ufw.sh
 declare -gA PGCTB_ANSWERS=([ufw_enable]=yes [ssh_current_port]=22 [ssh_port]=22 [ufw_ports]="443" [ufw_reset]=no [ufw_auto_discover]=no)
@@ -145,9 +148,19 @@ PGCTB_ANSWERS[block_abuse]=yes
 PGCTB_ANSWERS[abuse_profile]=minimal
 PGCTB_ANSWERS[abuse_file]="$tmp_ranges"
 PGCTB_DRY_RUN=0
+# Admin IP inside the blocked set must stay reachable (explicit allow first)
+echo "203.0.113.0/24" >>"$tmp_ranges"
+export PGCTB_ADMIN_IPS="203.0.113.9"
 # Clear prior
 _abuse_remove_all 2>/dev/null || true
 module_abuse || true
+if command -v nft >/dev/null && nft list chain inet securebox input >/dev/null 2>&1; then
+  rules="$(nft list chain inet securebox input)"
+  a_line="$(grep -n 'ip saddr 203.0.113.9 accept' <<<"$rules" | cut -d: -f1 || true)"
+  d_line="$(grep -n 'ip saddr @abuse4 drop' <<<"$rules" | cut -d: -f1 || true)"
+  check "admin IP allow rule precedes abuse drop" '[[ -n "$a_line" && -n "$d_line" && "$a_line" -lt "$d_line" ]]'
+fi
+unset PGCTB_ADMIN_IPS
 # Outbound dig to 1.1.1.1 must still get answers (established/related)
 if dig +time=3 +tries=1 @1.1.1.1 example.com A +short >/dev/null 2>&1; then
   echo "PASS: outbound to blocked-range IP still gets replies (established/related)"
@@ -196,6 +209,21 @@ ufw_st="$(ufw status 2>/dev/null | head -n1 || true)"
 check "restore live MTU" '[[ "$now_mtu" == "$old_mtu" ]]'
 check "restore live sysctl ip_forward" '[[ "$fwd" == "0" ]]'
 check "restore disables UFW when previously off" '[[ "$ufw_st" == *inactive* ]]'
+
+echo "=== 10) Single-run lock refuses a concurrent run ==="
+lock_out="$(mktemp)"
+( flock -x 9; sleep 30 ) 9>>/run/pgclocktb.lock &
+holder=$!
+sleep 1
+set +e
+timeout 90 bash install.sh --verify </dev/null >"$lock_out" 2>&1
+lock_rc=$?
+set -e
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+check "second run refused while another holds the lock" \
+  '[[ $lock_rc -ne 0 ]] && grep -q "Another PGClockTB run" "$lock_out"'
+rm -f "$lock_out"
 
 echo
 echo "RESULT: pass=$pass fail=$fail"
