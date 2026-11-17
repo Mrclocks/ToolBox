@@ -69,7 +69,7 @@ jobs:
           fi
       - name: smoke help / dry-run parse
         run: |
-          bash install.sh --help | grep -qE 'MrClock|Usage'
+          bash install.sh --help | grep -qE 'PGClockTB|Usage'
           bash install.sh --help | grep -q -- '--ufw-ports'
           bash install.sh --help | grep -q -- '--ufw-discover'
           bash -n install.sh

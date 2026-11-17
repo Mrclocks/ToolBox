@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
 # =============================================================================
-# MrClock ToolBox — VPN Hardening & Optimization
+# PGClockTB — VPN Hardening & Optimization
 # Ubuntu 22–26 · Debian 12–13
 # =============================================================================
 # One-liner (always latest release — no version pin needed):
 #   curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.sh | sudo bash
 # After first install, re-run anytime without network:
-#   sudo mrclock
+#   sudo pgclock      (legacy alias: mrclock)
 # =============================================================================
 set -o pipefail
 
-SECUREBOX_REPO="${SECUREBOX_REPO:-Mrclocks/ToolBox}"
+# Accept pre-0.4.0 overrides (SECUREBOX_DRY_RUN=1 …) as PGCTB_* equivalents.
+for __pgctb_v in $(compgen -e); do
+  [[ "$__pgctb_v" == SECUREBOX_* ]] || continue
+  __pgctb_n="PGCTB_${__pgctb_v#SECUREBOX_}"
+  [[ -n "${!__pgctb_n+x}" ]] || export "${__pgctb_n}=${!__pgctb_v}"
+done
+unset __pgctb_v __pgctb_n
+
+PGCTB_REPO="${PGCTB_REPO:-Mrclocks/ToolBox}"
 # "latest" resolves to the newest GitHub Release tag automatically
-SECUREBOX_REF="${SECUREBOX_REF:-latest}"
-SECUREBOX_INSTALL_DIR="${SECUREBOX_INSTALL_DIR:-/opt/mrclock-toolbox}"
-SECUREBOX_BIN_LINK="${SECUREBOX_BIN_LINK:-/usr/local/bin/mrclock}"
+PGCTB_REF="${PGCTB_REF:-latest}"
+PGCTB_INSTALL_DIR="${PGCTB_INSTALL_DIR:-/opt/pgclocktb}"
+PGCTB_BIN_LINK="${PGCTB_BIN_LINK:-/usr/local/bin/pgclock}"
+# Pre-0.4.0 names (MrClock ToolBox): kept working as aliases / symlinks
+PGCTB_LEGACY_INSTALL_DIR="${PGCTB_LEGACY_INSTALL_DIR:-/opt/mrclock-toolbox}"
+PGCTB_LEGACY_BIN_LINK="${PGCTB_LEGACY_BIN_LINK:-/usr/local/bin/mrclock}"
 
 # --- Bootstrap: local install first, then one-liner fetch ---
-_securebox_have_tree() {
+_pgctb_have_tree() {
   # Require a complete install tree — including abuse CIDR data files.
   # (Checking only that data/ exists allowed empty dirs to pass bootstrap,
   # then fail later with "missing abuse ranges file".)
@@ -31,8 +42,8 @@ _securebox_have_tree() {
     && [[ -r "${root}/data/abuse-ranges-aggressive.txt" ]]
 }
 
-_securebox_resolve_ref() {
-  local ref="${1:-${SECUREBOX_REF:-latest}}"
+_pgctb_resolve_ref() {
+  local ref="${1:-${PGCTB_REF:-latest}}"
   if [[ "$ref" != "latest" ]]; then
     printf '%s\n' "$ref"
     return 0
@@ -41,7 +52,7 @@ _securebox_resolve_ref() {
   # Prefer /releases/latest redirect (no api.github.com rate limits)
   local tag loc
   loc="$(curl -fsSIL --connect-timeout 15 \
-    "https://github.com/${SECUREBOX_REPO}/releases/latest" 2>/dev/null \
+    "https://github.com/${PGCTB_REPO}/releases/latest" 2>/dev/null \
     | tr -d '\r' \
     | awk 'tolower($1)=="location:"{print $2; exit}')"
   if [[ -n "$loc" ]]; then
@@ -51,51 +62,51 @@ _securebox_resolve_ref() {
   # Fallback: parse HTML of releases/latest
   if [[ -z "$tag" || "$tag" == "latest" ]]; then
     tag="$(curl -fsSL --connect-timeout 15 \
-      "https://github.com/${SECUREBOX_REPO}/releases/latest" 2>/dev/null \
+      "https://github.com/${PGCTB_REPO}/releases/latest" 2>/dev/null \
       | sed -n 's|.*releases/tag/\([^"<> ]*\).*|\1|p' \
       | head -n1)"
   fi
 
   if [[ -z "$tag" || "$tag" == "null" || "$tag" == "latest" ]]; then
-    echo "[MrClock] ERROR: could not resolve latest release tag via /releases/latest." >&2
+    echo "[PGClockTB] ERROR: could not resolve latest release tag via /releases/latest." >&2
     return 1
   fi
   printf '%s\n' "$tag"
 }
 
-_securebox_verify_release_assets() {
+_pgctb_verify_release_assets() {
   # Trust model: SHA256SUMS (+ optional .asc) MUST be separate GitHub Release
   # assets — NEVER trust a checksum file that arrived inside the same tarball.
-  # Fail-closed by default. Override only with SECUREBOX_ALLOW_INSECURE=1.
-  # Optional pinned key: SECUREBOX_GPG_FINGERPRINT=ABCD... (requires .asc)
+  # Fail-closed by default. Override only with PGCTB_ALLOW_INSECURE=1.
+  # Optional pinned key: PGCTB_GPG_FINGERPRINT=ABCD... (requires .asc)
   local archive="$1"
   local tag="$2"
   local asset_dir="$3"
   local sums="${asset_dir}/SHA256SUMS"
   local sig="${asset_dir}/SHA256SUMS.asc"
   local allow_insecure=0
-  case "${SECUREBOX_ALLOW_INSECURE:-0}" in
+  case "${PGCTB_ALLOW_INSECURE:-0}" in
     1|y|yes|true|on) allow_insecure=1 ;;
   esac
 
   if [[ ! -f "$sums" ]]; then
     if (( allow_insecure )); then
-      echo "[MrClock] WARN: SHA256SUMS missing — continuing because SECUREBOX_ALLOW_INSECURE=1" >&2
+      echo "[PGClockTB] WARN: SHA256SUMS missing — continuing because PGCTB_ALLOW_INSECURE=1" >&2
       return 0
     fi
-    echo "[MrClock] ERROR: SHA256SUMS release asset missing. Refusing to continue." >&2
-    echo "[MrClock] Tip: publish SHA256SUMS as a Release asset, or set SECUREBOX_ALLOW_INSECURE=1" >&2
+    echo "[PGClockTB] ERROR: SHA256SUMS release asset missing. Refusing to continue." >&2
+    echo "[PGClockTB] Tip: publish SHA256SUMS as a Release asset, or set PGCTB_ALLOW_INSECURE=1" >&2
     return 1
   fi
 
-  local fp="${SECUREBOX_GPG_FINGERPRINT:-}"
+  local fp="${PGCTB_GPG_FINGERPRINT:-}"
   if [[ -n "$fp" ]]; then
     if [[ ! -f "$sig" ]]; then
-      echo "[MrClock] ERROR: SECUREBOX_GPG_FINGERPRINT set but SHA256SUMS.asc missing." >&2
+      echo "[PGClockTB] ERROR: PGCTB_GPG_FINGERPRINT set but SHA256SUMS.asc missing." >&2
       return 1
     fi
     if ! command -v gpg >/dev/null 2>&1; then
-      echo "[MrClock] ERROR: gpg required to verify pinned signature." >&2
+      echo "[PGClockTB] ERROR: gpg required to verify pinned signature." >&2
       return 1
     fi
     if ! gpg --batch --status-fd 1 --verify "$sig" "$sums" 2>/dev/null \
@@ -104,109 +115,142 @@ _securebox_verify_release_assets() {
       local status
       status="$(gpg --batch --status-fd 1 --verify "$sig" "$sums" 2>/dev/null || true)"
       if ! grep -E "VALIDSIG[ ]+${fp// /}" <<<"$status" >/dev/null; then
-        echo "[MrClock] ERROR: SHA256SUMS.asc not signed by pinned fingerprint ${fp}" >&2
+        echo "[PGClockTB] ERROR: SHA256SUMS.asc not signed by pinned fingerprint ${fp}" >&2
         return 1
       fi
     fi
-    echo "[MrClock] SHA256SUMS signature OK (pinned fingerprint)" >&2
+    echo "[PGClockTB] SHA256SUMS signature OK (pinned fingerprint)" >&2
   elif [[ -f "$sig" ]]; then
     if command -v gpg >/dev/null 2>&1; then
       if gpg --verify "$sig" "$sums" >/dev/null 2>&1; then
-        echo "[MrClock] SHA256SUMS signature OK" >&2
+        echo "[PGClockTB] SHA256SUMS signature OK" >&2
       else
-        echo "[MrClock] ERROR: SHA256SUMS.asc signature verification failed." >&2
+        echo "[PGClockTB] ERROR: SHA256SUMS.asc signature verification failed." >&2
         return 1
       fi
     else
       if (( allow_insecure )); then
-        echo "[MrClock] WARN: gpg missing — skipping .asc check (SECUREBOX_ALLOW_INSECURE=1)" >&2
+        echo "[PGClockTB] WARN: gpg missing — skipping .asc check (PGCTB_ALLOW_INSECURE=1)" >&2
       else
-        echo "[MrClock] ERROR: SHA256SUMS.asc present but gpg is not installed." >&2
+        echo "[PGClockTB] ERROR: SHA256SUMS.asc present but gpg is not installed." >&2
         return 1
       fi
     fi
   else
     if (( allow_insecure )); then
-      echo "[MrClock] WARN: SHA256SUMS.asc not published — unsigned checksums accepted (ALLOW_INSECURE)" >&2
+      echo "[PGClockTB] WARN: SHA256SUMS.asc not published — unsigned checksums accepted (ALLOW_INSECURE)" >&2
     else
-      echo "[MrClock] WARN: SHA256SUMS.asc not published — checksum OK but unsigned." >&2
-      echo "[MrClock] Tip: set SECUREBOX_GPG_FINGERPRINT and publish .asc for signed releases." >&2
+      echo "[PGClockTB] WARN: SHA256SUMS.asc not published — checksum OK but unsigned." >&2
+      echo "[PGClockTB] Tip: set PGCTB_GPG_FINGERPRINT and publish .asc for signed releases." >&2
     fi
   fi
 
   local archive_base want got
   archive_base="$(basename "$archive")"
-  want="$(awk -v f1="ToolBox-${tag}.tar.gz" -v f2="$archive_base" '
-    $2==f1 || $2==f2 || $NF==f1 || $NF==f2 {print $1; exit}
+  want="$(awk -v f1="PGClockTB-${tag}.tar.gz" -v f0="ToolBox-${tag}.tar.gz" -v f2="$archive_base" '
+    $NF==f1 || $NF==f0 || $NF==f2 {print $1; exit}
   ' "$sums")"
   if [[ -z "$want" ]]; then
     if (( allow_insecure )); then
-      echo "[MrClock] WARN: SHA256SUMS has no entry for ${archive_base} — continuing (ALLOW_INSECURE)" >&2
+      echo "[PGClockTB] WARN: SHA256SUMS has no entry for ${archive_base} — continuing (ALLOW_INSECURE)" >&2
       return 0
     fi
-    echo "[MrClock] ERROR: SHA256SUMS has no entry for archive ${archive_base}" >&2
+    echo "[PGClockTB] ERROR: SHA256SUMS has no entry for archive ${archive_base}" >&2
     return 1
   fi
   got="$(sha256sum "$archive" | awk '{print $1}')"
   if [[ "$got" != "$want" ]]; then
-    echo "[MrClock] ERROR: archive SHA256 mismatch (got ${got}, want ${want})." >&2
+    echo "[PGClockTB] ERROR: archive SHA256 mismatch (got ${got}, want ${want})." >&2
     return 1
   fi
-  echo "[MrClock] Archive SHA256 verified against release asset SHA256SUMS" >&2
+  echo "[PGClockTB] Archive SHA256 verified against release asset SHA256SUMS" >&2
   return 0
 }
 
-_securebox_install_persistent() {
+_pgctb_install_persistent() {
   local src="$1"
-  [[ -n "$src" ]] && _securebox_have_tree "$src" || return 1
-  mkdir -p "$SECUREBOX_INSTALL_DIR"
+  [[ -n "$src" ]] && _pgctb_have_tree "$src" || return 1
+  mkdir -p "$PGCTB_INSTALL_DIR"
   # Copy tree (portable; no rsync required)
-  rm -rf "${SECUREBOX_INSTALL_DIR:?}/lib" "${SECUREBOX_INSTALL_DIR}/modules" "${SECUREBOX_INSTALL_DIR}/data" 2>/dev/null || true
-  cp -a "${src}/lib" "${src}/modules" "${src}/data" "$SECUREBOX_INSTALL_DIR/"
-  cp -a "${src}/install.sh" "$SECUREBOX_INSTALL_DIR/install.sh"
-  [[ -f "${src}/VERSION" ]] && cp -a "${src}/VERSION" "$SECUREBOX_INSTALL_DIR/VERSION" || true
-  [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$SECUREBOX_INSTALL_DIR/LICENSE" || true
-  [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$SECUREBOX_INSTALL_DIR/README.md" || true
-  [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$SECUREBOX_INSTALL_DIR/CHANGELOG.md" || true
-  chmod 755 "$SECUREBOX_INSTALL_DIR/install.sh"
-  mkdir -p "$(dirname "$SECUREBOX_BIN_LINK")"
+  rm -rf "${PGCTB_INSTALL_DIR:?}/lib" "${PGCTB_INSTALL_DIR}/modules" "${PGCTB_INSTALL_DIR}/data" 2>/dev/null || true
+  cp -a "${src}/lib" "${src}/modules" "${src}/data" "$PGCTB_INSTALL_DIR/"
+  cp -a "${src}/install.sh" "$PGCTB_INSTALL_DIR/install.sh"
+  [[ -f "${src}/VERSION" ]] && cp -a "${src}/VERSION" "$PGCTB_INSTALL_DIR/VERSION" || true
+  [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$PGCTB_INSTALL_DIR/LICENSE" || true
+  [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$PGCTB_INSTALL_DIR/README.md" || true
+  [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$PGCTB_INSTALL_DIR/CHANGELOG.md" || true
+  chmod 755 "$PGCTB_INSTALL_DIR/install.sh"
+  _pgctb_write_launcher "$PGCTB_BIN_LINK"
+  # Legacy command keeps working for people (and docs/scripts) using `mrclock`
+  if [[ -n "$PGCTB_LEGACY_BIN_LINK" && "$PGCTB_LEGACY_BIN_LINK" != "$PGCTB_BIN_LINK" ]]; then
+    _pgctb_write_launcher "$PGCTB_LEGACY_BIN_LINK"
+  fi
+  _pgctb_retire_legacy_install "$src"
+  echo "[PGClockTB] Installed to ${PGCTB_INSTALL_DIR} (command: pgclock)" >&2
+}
+
+_pgctb_write_launcher() {
+  local dest="$1"
+  mkdir -p "$(dirname "$dest")"
   # Preserve SSH_* across sudo env_reset when the wrapper itself elevates.
-  # When already invoked as `sudo mrclock`, install.sh recovers SSH_* via /proc.
-  cat >"$SECUREBOX_BIN_LINK" <<EOF
+  # When already invoked as `sudo pgclock`, install.sh recovers SSH_* via /proc.
+  cat >"${dest}.tmp.$$" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-INSTALL_SH="${SECUREBOX_INSTALL_DIR}/install.sh"
+INSTALL_SH="${PGCTB_INSTALL_DIR}/install.sh"
 if [[ "\${EUID:-\$(id -u)}" -ne 0 ]]; then
-  exec sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY,SSH_AUTH_SOCK,SECUREBOX_ALLOW_INSECURE,SECUREBOX_GPG_FINGERPRINT,SECUREBOX_ROLLBACK_SECONDS \\
+  exec sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY,SSH_AUTH_SOCK,PGCTB_ALLOW_INSECURE,PGCTB_GPG_FINGERPRINT,PGCTB_ROLLBACK_SECONDS,SECUREBOX_ALLOW_INSECURE,SECUREBOX_GPG_FINGERPRINT,SECUREBOX_ROLLBACK_SECONDS \\
     bash "\$INSTALL_SH" "\$@"
 fi
 exec bash "\$INSTALL_SH" "\$@"
 EOF
-  chmod 755 "$SECUREBOX_BIN_LINK"
-  echo "[MrClock] Installed to ${SECUREBOX_INSTALL_DIR} (command: mrclock)" >&2
+  chmod 755 "${dest}.tmp.$$"
+  mv -f "${dest}.tmp.$$" "$dest"
 }
 
-_securebox_fetch_tree() {
+_pgctb_retire_legacy_install() {
+  # Replace the pre-0.4.0 install dir with a symlink to the new one, so armed
+  # rollback units or scripts that reference /opt/mrclock-toolbox still work.
+  local src="$1" legacy="$PGCTB_LEGACY_INSTALL_DIR" self_dir=""
+  [[ -n "$legacy" && "$legacy" != "$PGCTB_INSTALL_DIR" ]] || return 0
+  [[ -d "$legacy" && ! -L "$legacy" ]] || return 0
+  _pgctb_have_tree "$legacy" || return 0           # only ever remove our own tree
+  [[ "$legacy" -ef "$PGCTB_INSTALL_DIR" || "$legacy" -ef "$src" ]] && return 0
+  if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    [[ "$self_dir" -ef "$legacy" ]] && return 0      # never delete the running tree
+  fi
+  rm -rf "${legacy:?}" && ln -s "$PGCTB_INSTALL_DIR" "$legacy" \
+    && echo "[PGClockTB] Replaced legacy ${legacy} with a symlink to ${PGCTB_INSTALL_DIR}" >&2
+}
+
+_pgctb_fetch_tree() {
   local tmp archive url resolved
-  resolved="$(_securebox_resolve_ref "${SECUREBOX_REF}")" || exit 1
-  SECUREBOX_REF="$resolved"
-  export SECUREBOX_REF
+  resolved="$(_pgctb_resolve_ref "${PGCTB_REF}")" || exit 1
+  PGCTB_REF="$resolved"
+  export PGCTB_REF
 
-  tmp="$(mktemp -d /tmp/securebox-fetch.XXXXXX)"
-  archive="${tmp}/securebox.tgz"
+  tmp="$(mktemp -d /tmp/pgclocktb-fetch.XXXXXX)"
+  archive="${tmp}/pgclocktb.tgz"
 
-  # Prefer the release-asset tarball (named ToolBox-<tag>.tar.gz) when published;
-  # fall back to GitHub source archive.
-  local asset_archive="ToolBox-${SECUREBOX_REF}.tar.gz"
-  url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/${asset_archive}"
-  echo "[MrClock] Downloading ${SECUREBOX_REPO}@${SECUREBOX_REF} ..." >&2
-  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive"; then
-    url="https://github.com/${SECUREBOX_REPO}/archive/refs/tags/${SECUREBOX_REF}.tar.gz"
+  # Prefer the release-asset tarball (PGClockTB-<tag>.tar.gz; ToolBox-<tag>.tar.gz
+  # before 0.4.0); fall back to GitHub source archive.
+  local asset_archive got_asset=0
+  echo "[PGClockTB] Downloading ${PGCTB_REPO}@${PGCTB_REF} ..." >&2
+  for asset_archive in "PGClockTB-${PGCTB_REF}.tar.gz" "ToolBox-${PGCTB_REF}.tar.gz"; do
+    url="https://github.com/${PGCTB_REPO}/releases/download/${PGCTB_REF}/${asset_archive}"
+    if curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" 2>/dev/null; then
+      got_asset=1
+      break
+    fi
+  done
+  if (( got_asset == 0 )); then
+    url="https://github.com/${PGCTB_REPO}/archive/refs/tags/${PGCTB_REF}.tar.gz"
     curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
-      url="https://codeload.github.com/${SECUREBOX_REPO}/tar.gz/refs/tags/${SECUREBOX_REF}"
+      url="https://codeload.github.com/${PGCTB_REPO}/tar.gz/refs/tags/${PGCTB_REF}"
       curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 "$url" -o "$archive" || {
-        echo "[MrClock] ERROR: failed to download release archive." >&2
-        echo "[MrClock] Tip: if this is a re-run, try:  sudo mrclock" >&2
+        echo "[PGClockTB] ERROR: failed to download release archive." >&2
+        echo "[PGClockTB] Tip: if this is a re-run, try:  sudo pgclock" >&2
         rm -rf "$tmp"
         return 1
       }
@@ -216,48 +260,48 @@ _securebox_fetch_tree() {
   # Download SHA256SUMS as a SEPARATE release asset (never from inside the tarball)
   local sums_dir="${tmp}/release-assets"
   mkdir -p "$sums_dir"
-  local sums_url="https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS"
+  local sums_url="https://github.com/${PGCTB_REPO}/releases/download/${PGCTB_REF}/SHA256SUMS"
   if curl -fsSL --connect-timeout 15 "$sums_url" -o "${sums_dir}/SHA256SUMS" 2>/dev/null; then
     curl -fsSL --connect-timeout 15 \
-      "https://github.com/${SECUREBOX_REPO}/releases/download/${SECUREBOX_REF}/SHA256SUMS.asc" \
+      "https://github.com/${PGCTB_REPO}/releases/download/${PGCTB_REF}/SHA256SUMS.asc" \
       -o "${sums_dir}/SHA256SUMS.asc" 2>/dev/null || true
   fi
-  # Fail-closed verify (missing sums ⇒ error unless SECUREBOX_ALLOW_INSECURE=1)
-  _securebox_verify_release_assets "$archive" "$SECUREBOX_REF" "$sums_dir" || {
+  # Fail-closed verify (missing sums ⇒ error unless PGCTB_ALLOW_INSECURE=1)
+  _pgctb_verify_release_assets "$archive" "$PGCTB_REF" "$sums_dir" || {
     rm -rf "$tmp"
     return 1
   }
 
   tar -xzf "$archive" -C "$tmp" || {
-    echo "[MrClock] ERROR: failed to extract archive." >&2
+    echo "[PGClockTB] ERROR: failed to extract archive." >&2
     rm -rf "$tmp"
     return 1
   }
 
   local extracted="" d
-  # Preferred: ToolBox-<tag>/ (release asset). Also GitHub source zip / flat layout.
+  # Preferred: PGClockTB-<tag>/ (release asset). Also GitHub source zip / flat layout.
   while IFS= read -r d; do
-    if _securebox_have_tree "$d"; then
+    if _pgctb_have_tree "$d"; then
       extracted="$d"
       break
     fi
-  done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d \( -name 'ToolBox-*' -o -name 'Mrclocks-ToolBox-*' \) 2>/dev/null | sort)
+  done < <(find "$tmp" -mindepth 1 -maxdepth 1 -type d \( -name 'PGClockTB-*' -o -name 'Mrclocks-PGClockTB-*' -o -name 'ToolBox-*' -o -name 'Mrclocks-ToolBox-*' \) 2>/dev/null | sort)
 
-  if [[ -z "$extracted" ]] && _securebox_have_tree "$tmp"; then
+  if [[ -z "$extracted" ]] && _pgctb_have_tree "$tmp"; then
     extracted="$tmp"
   fi
 
   if [[ -z "$extracted" ]]; then
     while IFS= read -r d; do
-      if _securebox_have_tree "$d"; then
+      if _pgctb_have_tree "$d"; then
         extracted="$d"
         break
       fi
     done < <(find "$tmp" -mindepth 1 -maxdepth 3 -type d -name lib 2>/dev/null | while read -r libdir; do dirname "$libdir"; done)
   fi
 
-  if [[ -z "$extracted" ]] || ! _securebox_have_tree "$extracted"; then
-    echo "[MrClock] ERROR: archive layout unexpected." >&2
+  if [[ -z "$extracted" ]] || ! _pgctb_have_tree "$extracted"; then
+    echo "[PGClockTB] ERROR: archive layout unexpected." >&2
     rm -rf "$tmp"
     return 1
   fi
@@ -265,29 +309,29 @@ _securebox_fetch_tree() {
   printf '%s\n' "$extracted"
 }
 
-_securebox_bootstrap() {
+_pgctb_bootstrap() {
   local candidate=""
 
-  # 1) Running from a full tree next to this script (git clone OR /opt/mrclock OR extracted)
+  # 1) Running from a full tree next to this script (git clone OR /opt/pgclocktb OR extracted)
   if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if _securebox_have_tree "$candidate"; then
-      SECUREBOX_ROOT="$candidate"
-      # If this is the persistent install invoked via `mrclock`, use it as-is.
+    if _pgctb_have_tree "$candidate"; then
+      PGCTB_ROOT="$candidate"
+      # If this is the persistent install invoked via `pgclock`, use it as-is.
       # If it's a newer checkout, refresh /opt.
-      if [[ "$candidate" != "$SECUREBOX_INSTALL_DIR" ]]; then
-        _securebox_install_persistent "$candidate" 2>/dev/null || true
+      if [[ "$candidate" != "$PGCTB_INSTALL_DIR" ]]; then
+        _pgctb_install_persistent "$candidate" 2>/dev/null || true
       fi
       return 0
     fi
   fi
 
-  if [[ -n "${SECUREBOX_ROOT:-}" ]] && _securebox_have_tree "$SECUREBOX_ROOT"; then
+  if [[ -n "${PGCTB_ROOT:-}" ]] && _pgctb_have_tree "$PGCTB_ROOT"; then
     return 0
   fi
 
-  if [[ "${SECUREBOX_BOOTSTRAPPED:-0}" == "1" ]]; then
-    echo "[MrClock] ERROR: bootstrap loop detected." >&2
+  if [[ "${PGCTB_BOOTSTRAPPED:-0}" == "1" ]]; then
+    echo "[PGClockTB] ERROR: bootstrap loop detected." >&2
     exit 1
   fi
 
@@ -295,53 +339,58 @@ _securebox_bootstrap() {
   #    (do not reuse a stale /opt copy — that caused old DNS bugs to stick around)
   local extracted
   # NOTE: exit inside $() only kills the subshell — must check status here.
-  if ! extracted="$(_securebox_fetch_tree)"; then
-    echo "[MrClock] ERROR: could not download a usable ToolBox tree." >&2
+  if ! extracted="$(_pgctb_fetch_tree)"; then
+    echo "[PGClockTB] ERROR: could not download a usable PGClockTB tree." >&2
     exit 1
   fi
-  if [[ -z "$extracted" ]] || ! _securebox_have_tree "$extracted"; then
-    echo "[MrClock] ERROR: fetched tree incomplete at '${extracted:-<empty>}'." >&2
+  if [[ -z "$extracted" ]] || ! _pgctb_have_tree "$extracted"; then
+    echo "[PGClockTB] ERROR: fetched tree incomplete at '${extracted:-<empty>}'." >&2
     exit 1
   fi
-  _securebox_install_persistent "$extracted" || true
-  export SECUREBOX_BOOTSTRAPPED=1
-  export SECUREBOX_ROOT="${SECUREBOX_INSTALL_DIR}"
-  if ! _securebox_have_tree "$SECUREBOX_ROOT"; then
-    SECUREBOX_ROOT="$extracted"
+  _pgctb_install_persistent "$extracted" || true
+  export PGCTB_BOOTSTRAPPED=1
+  export PGCTB_ROOT="${PGCTB_INSTALL_DIR}"
+  if ! _pgctb_have_tree "$PGCTB_ROOT"; then
+    PGCTB_ROOT="$extracted"
   fi
-  if [[ -z "$SECUREBOX_ROOT" ]] || [[ ! -f "${SECUREBOX_ROOT}/install.sh" ]]; then
-    echo "[MrClock] ERROR: install.sh missing under ${SECUREBOX_ROOT:-<empty>}." >&2
+  if [[ -z "$PGCTB_ROOT" ]] || [[ ! -f "${PGCTB_ROOT}/install.sh" ]]; then
+    echo "[PGClockTB] ERROR: install.sh missing under ${PGCTB_ROOT:-<empty>}." >&2
     exit 1
   fi
-  echo "[MrClock] Starting from ${SECUREBOX_ROOT}" >&2
-  exec bash "${SECUREBOX_ROOT}/install.sh" "$@"
+  echo "[PGClockTB] Starting from ${PGCTB_ROOT}" >&2
+  exec bash "${PGCTB_ROOT}/install.sh" "$@"
 }
 
-_securebox_bootstrap "$@"
+# Tests source this file for its installer helpers without bootstrapping
+if [[ "${PGCTB_INSTALL_LIB_ONLY:-0}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+_pgctb_bootstrap "$@"
 
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/common.sh"
+source "${PGCTB_ROOT}/lib/common.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/ui.sh"
+source "${PGCTB_ROOT}/lib/ui.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/os.sh"
+source "${PGCTB_ROOT}/lib/os.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/net.sh"
+source "${PGCTB_ROOT}/lib/net.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/questions.sh"
+source "${PGCTB_ROOT}/lib/questions.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/rollback.sh"
+source "${PGCTB_ROOT}/lib/rollback.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/plan.sh"
+source "${PGCTB_ROOT}/lib/plan.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/pgclockmg.sh"
+source "${PGCTB_ROOT}/lib/pgclockmg.sh"
 # shellcheck disable=SC1091
-source "${SECUREBOX_ROOT}/lib/runner.sh"
+source "${PGCTB_ROOT}/lib/runner.sh"
 
 source_modules
 usage() {
   cat <<EOF
-${SECUREBOX_NAME} v${SECUREBOX_VERSION}
+${PGCTB_NAME} v${PGCTB_VERSION}
 
 Usage: sudo bash install.sh [options]
 
@@ -385,118 +434,118 @@ defaults_one_click() {
   detect_network_stack
   detect_dns_manager
   questionnaire_common_safety
-  SECUREBOX_ANSWERS[continue_on_error]=yes
+  PGCTB_ANSWERS[continue_on_error]=yes
   # Conservative one-click: only core safe steps unless flags opt in
-  SECUREBOX_ANSWERS[do_update]=yes
-  SECUREBOX_ANSWERS[do_timesync]=yes
-  SECUREBOX_ANSWERS[do_bbr]=yes
-  SECUREBOX_ANSWERS[do_ssh]=no
-  SECUREBOX_ANSWERS[do_logs]=no
-  SECUREBOX_ANSWERS[logs_truncate_active]=no
-  SECUREBOX_ANSWERS[logs_docker_prune]=no
-  SECUREBOX_ANSWERS[dns_choice]=6
-  SECUREBOX_ANSWERS[dns_id]=keep
-  SECUREBOX_ANSWERS[mtu]=keep
-  SECUREBOX_ANSWERS[ssh_current_port]="$(_ssh_current_port)"
-  SECUREBOX_ANSWERS[ssh_port]="${SECUREBOX_CLI_SSH_PORT:-${SECUREBOX_ANSWERS[ssh_current_port]}}"
-  if [[ -n "${SECUREBOX_CLI_SSH_PORT:-}" ]]; then
-    SECUREBOX_ANSWERS[do_ssh]=yes
+  PGCTB_ANSWERS[do_update]=yes
+  PGCTB_ANSWERS[do_timesync]=yes
+  PGCTB_ANSWERS[do_bbr]=yes
+  PGCTB_ANSWERS[do_ssh]=no
+  PGCTB_ANSWERS[do_logs]=no
+  PGCTB_ANSWERS[logs_truncate_active]=no
+  PGCTB_ANSWERS[logs_docker_prune]=no
+  PGCTB_ANSWERS[dns_choice]=6
+  PGCTB_ANSWERS[dns_id]=keep
+  PGCTB_ANSWERS[mtu]=keep
+  PGCTB_ANSWERS[ssh_current_port]="$(_ssh_current_port)"
+  PGCTB_ANSWERS[ssh_port]="${PGCTB_CLI_SSH_PORT:-${PGCTB_ANSWERS[ssh_current_port]}}"
+  if [[ -n "${PGCTB_CLI_SSH_PORT:-}" ]]; then
+    PGCTB_ANSWERS[do_ssh]=yes
   fi
-  SECUREBOX_ANSWERS[ssh_wait_confirm]=no
-  SECUREBOX_ANSWERS[ssh_password_auth]=keep
-  SECUREBOX_ANSWERS[ssh_permit_root]=keep
-  SECUREBOX_ANSWERS[ssh_max_auth_tries]=5
-  SECUREBOX_ANSWERS[disable_ipv6]="${SECUREBOX_CLI_DISABLE_IPV6:-no}"
-  SECUREBOX_ANSWERS[block_abuse]="${SECUREBOX_CLI_BLOCK_ABUSE:-no}"
-  SECUREBOX_ANSWERS[abuse_profile]="${SECUREBOX_CLI_ABUSE_PROFILE:-minimal}"
-  SECUREBOX_ANSWERS[ufw_enable]="${SECUREBOX_CLI_UFW_ENABLE:-no}"
-  SECUREBOX_ANSWERS[ufw_auto_discover]="${SECUREBOX_CLI_UFW_DISCOVER:-no}"
-  SECUREBOX_ANSWERS[ufw_ports]="${SECUREBOX_CLI_UFW_PORTS:-}"
-  SECUREBOX_ANSWERS[ufw_reset]="${SECUREBOX_CLI_UFW_RESET:-no}"
-  SECUREBOX_ANSWERS[enable_fail2ban]="${SECUREBOX_CLI_FAIL2BAN:-no}"
-  SECUREBOX_ANSWERS[unattended]="${SECUREBOX_CLI_UNATTENDED:-no}"
-  SECUREBOX_ANSWERS[unattended_reboot]=no
-  SECUREBOX_ANSWERS[disable_unused]=no
-  SECUREBOX_ANSWERS[disable_snapd]=no
-  SECUREBOX_ANSWERS[f2b_bantime]=1h
-  SECUREBOX_ANSWERS[f2b_findtime]=10m
-  SECUREBOX_ANSWERS[f2b_maxretry]=4
-  if [[ -n "${SECUREBOX_CLI_MTU:-}" ]]; then
-    SECUREBOX_ANSWERS[mtu]="$SECUREBOX_CLI_MTU"
+  PGCTB_ANSWERS[ssh_wait_confirm]=no
+  PGCTB_ANSWERS[ssh_password_auth]=keep
+  PGCTB_ANSWERS[ssh_permit_root]=keep
+  PGCTB_ANSWERS[ssh_max_auth_tries]=5
+  PGCTB_ANSWERS[disable_ipv6]="${PGCTB_CLI_DISABLE_IPV6:-no}"
+  PGCTB_ANSWERS[block_abuse]="${PGCTB_CLI_BLOCK_ABUSE:-no}"
+  PGCTB_ANSWERS[abuse_profile]="${PGCTB_CLI_ABUSE_PROFILE:-minimal}"
+  PGCTB_ANSWERS[ufw_enable]="${PGCTB_CLI_UFW_ENABLE:-no}"
+  PGCTB_ANSWERS[ufw_auto_discover]="${PGCTB_CLI_UFW_DISCOVER:-no}"
+  PGCTB_ANSWERS[ufw_ports]="${PGCTB_CLI_UFW_PORTS:-}"
+  PGCTB_ANSWERS[ufw_reset]="${PGCTB_CLI_UFW_RESET:-no}"
+  PGCTB_ANSWERS[enable_fail2ban]="${PGCTB_CLI_FAIL2BAN:-no}"
+  PGCTB_ANSWERS[unattended]="${PGCTB_CLI_UNATTENDED:-no}"
+  PGCTB_ANSWERS[unattended_reboot]=no
+  PGCTB_ANSWERS[disable_unused]=no
+  PGCTB_ANSWERS[disable_snapd]=no
+  PGCTB_ANSWERS[f2b_bantime]=1h
+  PGCTB_ANSWERS[f2b_findtime]=10m
+  PGCTB_ANSWERS[f2b_maxretry]=4
+  if [[ -n "${PGCTB_CLI_MTU:-}" ]]; then
+    PGCTB_ANSWERS[mtu]="$PGCTB_CLI_MTU"
   fi
-  if [[ -n "${SECUREBOX_CLI_DNS:-}" ]]; then
-    case "$SECUREBOX_CLI_DNS" in
-      cloudflare) SECUREBOX_ANSWERS[dns_choice]=1; SECUREBOX_ANSWERS[dns_id]=cloudflare; SECUREBOX_ANSWERS[dns_primary]=1.1.1.1; SECUREBOX_ANSWERS[dns_secondary]=1.0.0.1 ;;
-      google) SECUREBOX_ANSWERS[dns_choice]=2; SECUREBOX_ANSWERS[dns_id]=google; SECUREBOX_ANSWERS[dns_primary]=8.8.8.8; SECUREBOX_ANSWERS[dns_secondary]=8.8.4.4 ;;
-      quad9) SECUREBOX_ANSWERS[dns_choice]=3; SECUREBOX_ANSWERS[dns_id]=quad9; SECUREBOX_ANSWERS[dns_primary]=9.9.9.9; SECUREBOX_ANSWERS[dns_secondary]=149.112.112.112 ;;
-      opendns) SECUREBOX_ANSWERS[dns_choice]=4; SECUREBOX_ANSWERS[dns_id]=opendns; SECUREBOX_ANSWERS[dns_primary]=208.67.222.222; SECUREBOX_ANSWERS[dns_secondary]=208.67.220.220 ;;
-      adguard) SECUREBOX_ANSWERS[dns_choice]=5; SECUREBOX_ANSWERS[dns_id]=adguard; SECUREBOX_ANSWERS[dns_primary]=94.140.14.14; SECUREBOX_ANSWERS[dns_secondary]=94.140.15.15 ;;
-      keep) SECUREBOX_ANSWERS[dns_choice]=6; SECUREBOX_ANSWERS[dns_id]=keep ;;
-      *) ui_error "Invalid --dns value: ${SECUREBOX_CLI_DNS}"; exit 1 ;;
+  if [[ -n "${PGCTB_CLI_DNS:-}" ]]; then
+    case "$PGCTB_CLI_DNS" in
+      cloudflare) PGCTB_ANSWERS[dns_choice]=1; PGCTB_ANSWERS[dns_id]=cloudflare; PGCTB_ANSWERS[dns_primary]=1.1.1.1; PGCTB_ANSWERS[dns_secondary]=1.0.0.1 ;;
+      google) PGCTB_ANSWERS[dns_choice]=2; PGCTB_ANSWERS[dns_id]=google; PGCTB_ANSWERS[dns_primary]=8.8.8.8; PGCTB_ANSWERS[dns_secondary]=8.8.4.4 ;;
+      quad9) PGCTB_ANSWERS[dns_choice]=3; PGCTB_ANSWERS[dns_id]=quad9; PGCTB_ANSWERS[dns_primary]=9.9.9.9; PGCTB_ANSWERS[dns_secondary]=149.112.112.112 ;;
+      opendns) PGCTB_ANSWERS[dns_choice]=4; PGCTB_ANSWERS[dns_id]=opendns; PGCTB_ANSWERS[dns_primary]=208.67.222.222; PGCTB_ANSWERS[dns_secondary]=208.67.220.220 ;;
+      adguard) PGCTB_ANSWERS[dns_choice]=5; PGCTB_ANSWERS[dns_id]=adguard; PGCTB_ANSWERS[dns_primary]=94.140.14.14; PGCTB_ANSWERS[dns_secondary]=94.140.15.15 ;;
+      keep) PGCTB_ANSWERS[dns_choice]=6; PGCTB_ANSWERS[dns_id]=keep ;;
+      *) ui_error "Invalid --dns value: ${PGCTB_CLI_DNS}"; exit 1 ;;
     esac
   fi
 }
 
 parse_args() {
-  SECUREBOX_MODE=menu
-  SECUREBOX_DRY_RUN=0
+  PGCTB_MODE=menu
+  PGCTB_DRY_RUN=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --one-click) SECUREBOX_MODE=one_click; shift ;;
-      --dry-run) SECUREBOX_DRY_RUN=1; SECUREBOX_MODE="${SECUREBOX_MODE:-menu}"; shift ;;
-      --verify) SECUREBOX_MODE=verify; shift ;;
+      --one-click) PGCTB_MODE=one_click; shift ;;
+      --dry-run) PGCTB_DRY_RUN=1; PGCTB_MODE="${PGCTB_MODE:-menu}"; shift ;;
+      --verify) PGCTB_MODE=verify; shift ;;
       --ssh-port)
         [[ -n "${2-}" ]] || { ui_error "--ssh-port requires a value"; exit 1; }
         if ! is_port "$2"; then
           ui_error "Invalid --ssh-port: $2 (need 1–65535)"
           exit 1
         fi
-        SECUREBOX_CLI_SSH_PORT="$2"; shift 2 ;;
-      --disable-ipv6) SECUREBOX_CLI_DISABLE_IPV6=yes; shift ;;
+        PGCTB_CLI_SSH_PORT="$2"; shift 2 ;;
+      --disable-ipv6) PGCTB_CLI_DISABLE_IPV6=yes; shift ;;
       --mtu)
         [[ -n "${2-}" ]] || { ui_error "--mtu requires a value"; exit 1; }
         if [[ "$2" != "keep" ]] && { ! is_uint "$2" || (( $2 < 1280 || $2 > 9000 )); }; then
           ui_error "Invalid --mtu: $2 (need 1280–9000 or 'keep')"
           exit 1
         fi
-        SECUREBOX_CLI_MTU="$2"; shift 2 ;;
+        PGCTB_CLI_MTU="$2"; shift 2 ;;
       --dns)
         [[ -n "${2-}" ]] || { ui_error "--dns requires a value"; exit 1; }
         case "$2" in
           cloudflare|google|quad9|opendns|adguard|keep) ;;
           *) ui_error "Invalid --dns: $2 (cloudflare|google|quad9|opendns|adguard|keep)"; exit 1 ;;
         esac
-        SECUREBOX_CLI_DNS="$2"; shift 2 ;;
-      --no-abuse-block) SECUREBOX_CLI_BLOCK_ABUSE=no; shift ;;
-      --block-abuse) SECUREBOX_CLI_BLOCK_ABUSE=yes; shift ;;
+        PGCTB_CLI_DNS="$2"; shift 2 ;;
+      --no-abuse-block) PGCTB_CLI_BLOCK_ABUSE=no; shift ;;
+      --block-abuse) PGCTB_CLI_BLOCK_ABUSE=yes; shift ;;
       --abuse-profile)
         [[ -n "${2-}" ]] || { ui_error "--abuse-profile requires minimal|aggressive"; exit 1; }
         case "$2" in
-          minimal|aggressive) SECUREBOX_CLI_ABUSE_PROFILE="$2" ;;
+          minimal|aggressive) PGCTB_CLI_ABUSE_PROFILE="$2" ;;
           *) ui_error "Invalid --abuse-profile: $2"; exit 1 ;;
         esac
         shift 2 ;;
-      --no-ufw) SECUREBOX_CLI_UFW_ENABLE=no; shift ;;
-      --ufw) SECUREBOX_CLI_UFW_ENABLE=yes; shift ;;
+      --no-ufw) PGCTB_CLI_UFW_ENABLE=no; shift ;;
+      --ufw) PGCTB_CLI_UFW_ENABLE=yes; shift ;;
       --ufw-ports)
         [[ -n "${2-}" ]] || { ui_error "--ufw-ports requires a value"; exit 1; }
-        SECUREBOX_CLI_UFW_PORTS="$2"; shift 2 ;;
-      --ufw-discover) SECUREBOX_CLI_UFW_DISCOVER=yes; shift ;;
-      --ufw-reset) SECUREBOX_CLI_UFW_RESET=yes; shift ;;
-      --fail2ban) SECUREBOX_CLI_FAIL2BAN=yes; shift ;;
-      --unattended) SECUREBOX_CLI_UNATTENDED=yes; shift ;;
+        PGCTB_CLI_UFW_PORTS="$2"; shift 2 ;;
+      --ufw-discover) PGCTB_CLI_UFW_DISCOVER=yes; shift ;;
+      --ufw-reset) PGCTB_CLI_UFW_RESET=yes; shift ;;
+      --fail2ban) PGCTB_CLI_FAIL2BAN=yes; shift ;;
+      --unattended) PGCTB_CLI_UNATTENDED=yes; shift ;;
       --rollback-seconds)
         if [[ -z "${2-}" ]] || ! is_uint "$2"; then
           ui_error "--rollback-seconds requires a number"
           exit 1
         fi
-        SECUREBOX_ROLLBACK_SECONDS="$2"; shift 2 ;;
-      --no-rollback) SECUREBOX_ROLLBACK_SECONDS=0; shift ;;
+        PGCTB_ROLLBACK_SECONDS="$2"; shift 2 ;;
+      --no-rollback) PGCTB_ROLLBACK_SECONDS=0; shift ;;
       --help|-h) usage; exit 0 ;;
       *) ui_error "Unknown option: $1"; usage; exit 1 ;;
     esac
   done
-  export SECUREBOX_DRY_RUN SECUREBOX_ROLLBACK_SECONDS
+  export PGCTB_DRY_RUN PGCTB_ROLLBACK_SECONDS
 }
 
 optimization_menu_loop() {
@@ -679,16 +728,20 @@ main() {
 
   require_root
   parse_args "$@"
+  # One-time move of MrClock ToolBox (< 0.4.0) state/log/backup dirs
+  if ! is_dry_run && declare -F pgctb_migrate_legacy_dirs >/dev/null 2>&1; then
+    pgctb_migrate_legacy_dirs || ui_warn "Could not fully migrate legacy /var/*/securebox dirs (see log)"
+  fi
   # sudo env_reset drops SSH_CONNECTION — recover before any IPv6/port/f2b logic
   if declare -F recover_ssh_env >/dev/null 2>&1; then
     recover_ssh_env || true
     if [[ -z "${SSH_CONNECTION:-}" ]]; then
-      ui_warn "SSH_CONNECTION unset (common under sudo). Prefer: sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT mrclock"
+      ui_warn "SSH_CONNECTION unset (common under sudo). Prefer: sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT pgclock"
     fi
   fi
   # Default timed-rollback window (MTU/SSH/UFW/DNS share this; 0 disables)
-  SECUREBOX_ROLLBACK_SECONDS="${SECUREBOX_ROLLBACK_SECONDS:-120}"
-  export SECUREBOX_ROLLBACK_SECONDS
+  PGCTB_ROLLBACK_SECONDS="${PGCTB_ROLLBACK_SECONDS:-120}"
+  export PGCTB_ROLLBACK_SECONDS
   assert_supported_os
   detect_network_stack
   detect_dns_manager
@@ -707,16 +760,16 @@ main() {
     fi
 
     # Ensure local launcher exists for next run without curl
-    if _securebox_have_tree "${SECUREBOX_ROOT}"; then
-      _securebox_install_persistent "${SECUREBOX_ROOT}" 2>/dev/null || true
+    if _pgctb_have_tree "${PGCTB_ROOT}"; then
+      _pgctb_install_persistent "${PGCTB_ROOT}" 2>/dev/null || true
     fi
   else
     ui_warn "DRY-RUN: skipping heal / persistent install / all /etc writes"
   fi
 
-  log INFO "MrClock toolbox ${SECUREBOX_VERSION} starting on ${OS_PRETTY}"
+  log INFO "PGClockTB toolbox ${PGCTB_VERSION} starting on ${OS_PRETTY}"
 
-  case "$SECUREBOX_MODE" in
+  case "$PGCTB_MODE" in
     one_click)
       ui_banner
       defaults_one_click
@@ -735,7 +788,7 @@ main() {
         review_answers
       fi
       run_pipeline_all
-      if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+      if ((${#PGCTB_FAILED_MODULES[@]} > 0)); then
         exit 1
       fi
       ;;
@@ -746,7 +799,7 @@ main() {
       else
         run_single report
       fi
-      if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
+      if ((${#PGCTB_FAILED_MODULES[@]} > 0)); then
         exit 1
       fi
       ;;

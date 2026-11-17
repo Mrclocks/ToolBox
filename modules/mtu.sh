@@ -32,7 +32,7 @@ module_mtu() {
   detect_network_stack
 
   local iface="${NET_DEFAULT_IFACE}"
-  local mtu="${SECUREBOX_ANSWERS[mtu]:-}"
+  local mtu="${PGCTB_ANSWERS[mtu]:-}"
 
   if is_dry_run; then
     if answered_yes mtu_mss_clamp; then
@@ -91,7 +91,7 @@ module_mtu() {
       return 0
     fi
     # Arm timed rollback if requested
-    local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+    local rollback_secs="${PGCTB_ROLLBACK_SECONDS:-120}"
     if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
       if declare -F schedule_timed_rollback >/dev/null 2>&1; then
         schedule_timed_rollback "mtu" "$rollback_secs" || true

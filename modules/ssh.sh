@@ -83,7 +83,7 @@ _ssh_write_socket_dropin() {
   local dropin="${dir}/00-securebox.conf"
   backup_file "$dropin"
   {
-    echo "# Managed by MrClock ${SECUREBOX_VERSION}"
+    echo "# Managed by PGClockTB ${PGCTB_VERSION}"
     echo "[Socket]"
     # Clear packaged ListenStream then set ours
     echo "ListenStream="
@@ -216,13 +216,13 @@ _ssh_write_dropin() {
   local current="$2"
   local new_port="$3"
   local finalize="${4:-0}"
-  local harden_password="${SECUREBOX_ANSWERS[ssh_password_auth]:-keep}"
-  local permit_root="${SECUREBOX_ANSWERS[ssh_permit_root]:-keep}"
-  local max_auth="${SECUREBOX_ANSWERS[ssh_max_auth_tries]:-5}"
+  local harden_password="${PGCTB_ANSWERS[ssh_password_auth]:-keep}"
+  local permit_root="${PGCTB_ANSWERS[ssh_permit_root]:-keep}"
+  local max_auth="${PGCTB_ANSWERS[ssh_max_auth_tries]:-5}"
   is_uint "$max_auth" || max_auth=5
 
   {
-    echo "# Managed by MrClock ${SECUREBOX_VERSION} (${SECUREBOX_RUN_ID})"
+    echo "# Managed by PGClockTB ${PGCTB_VERSION} (${PGCTB_RUN_ID})"
     if [[ "$finalize" == "1" ]]; then
       echo "Port ${new_port}"
     elif [[ "$new_port" != "$current" ]]; then
@@ -262,7 +262,7 @@ _ssh_write_dropin() {
 _ssh_rollback_files() {
   local conf="$1"
   local dropin="$2"
-  local run="${SECUREBOX_BACKUP_ROOT}/${SECUREBOX_RUN_ID}"
+  local run="${PGCTB_BACKUP_ROOT}/${PGCTB_RUN_ID}"
   ui_error "sshd config test/reload failed — restoring backup"
   if [[ -f "${run}${dropin}" ]]; then
     cp -a "${run}${dropin}" "$dropin" 2>/dev/null || rm -f "$dropin"
@@ -289,7 +289,7 @@ module_ssh() {
   ui_step "SSH port & hardening"
 
   if ! require_answer_yes do_ssh ssh "SSH changes not explicitly enabled"; then
-    module_skip "ssh" "do_ssh='${SECUREBOX_ANSWERS[do_ssh]:-}'"
+    module_skip "ssh" "do_ssh='${PGCTB_ANSWERS[do_ssh]:-}'"
     return 0
   fi
 
@@ -302,27 +302,27 @@ module_ssh() {
 
   local current new_port
   # Honor pending cutover: do not silently drop the old port on re-run
-  if [[ -f "${SECUREBOX_STATE_DIR}/ssh_cutover" && "$(cat "${SECUREBOX_STATE_DIR}/ssh_cutover" 2>/dev/null)" == "pending" ]]; then
-    current="$(cat "${SECUREBOX_STATE_DIR}/ssh_old_port" 2>/dev/null || _ssh_current_port)"
-    new_port="$(cat "${SECUREBOX_STATE_DIR}/ssh_new_port" 2>/dev/null || echo "${SECUREBOX_ANSWERS[ssh_port]:-$current}")"
+  if [[ -f "${PGCTB_STATE_DIR}/ssh_cutover" && "$(cat "${PGCTB_STATE_DIR}/ssh_cutover" 2>/dev/null)" == "pending" ]]; then
+    current="$(cat "${PGCTB_STATE_DIR}/ssh_old_port" 2>/dev/null || _ssh_current_port)"
+    new_port="$(cat "${PGCTB_STATE_DIR}/ssh_new_port" 2>/dev/null || echo "${PGCTB_ANSWERS[ssh_port]:-$current}")"
     ui_warn "Pending SSH cutover detected — keeping dual-port state (${current} + ${new_port})"
   else
     current="$(_ssh_current_port)"
-    new_port="${SECUREBOX_ANSWERS[ssh_port]:-$current}"
+    new_port="${PGCTB_ANSWERS[ssh_port]:-$current}"
   fi
-  SECUREBOX_ANSWERS["ssh_current_port"]="$current"
+  PGCTB_ANSWERS["ssh_current_port"]="$current"
 
   # Password auth guard: only disable if login user has a usable key
-  if [[ "${SECUREBOX_ANSWERS[ssh_password_auth]:-}" == "no" ]]; then
+  if [[ "${PGCTB_ANSWERS[ssh_password_auth]:-}" == "no" ]]; then
     if ! _ssh_user_has_usable_key; then
       ui_warn "Refusing to disable password auth — user '$(_ssh_login_user)' has no usable SSH key (ignoring forced-command keys)."
-      SECUREBOX_ANSWERS["ssh_password_auth"]=keep
+      PGCTB_ANSWERS["ssh_password_auth"]=keep
     fi
   fi
 
   local dropin="$SSH_DROPIN_PATH"
   if is_dry_run; then
-    ui_info "[dry-run] Would write ${dropin} (port ${current}→${new_port}); MaxAuthTries=${SECUREBOX_ANSWERS[ssh_max_auth_tries]:-5}"
+    ui_info "[dry-run] Would write ${dropin} (port ${current}→${new_port}); MaxAuthTries=${PGCTB_ANSWERS[ssh_max_auth_tries]:-5}"
     if _ssh_socket_active; then
       ui_info "[dry-run] ssh.socket active — would update ListenStream drop-in"
     fi
@@ -332,7 +332,7 @@ module_ssh() {
 
   backup_file "$conf"
   mkdir -p /etc/ssh/sshd_config.d
-  chmod 700 "${SECUREBOX_BACKUP_ROOT}" 2>/dev/null || true
+  chmod 700 "${PGCTB_BACKUP_ROOT}" 2>/dev/null || true
 
   # Migrate legacy 99- drop-in → 00- (first value wins)
   if [[ -f "$SSH_DROPIN_LEGACY" && ! -f "$dropin" ]]; then
@@ -372,8 +372,8 @@ module_ssh() {
 
   # Ensure UFW allows both if ufw already active
   if have_cmd ufw && ufw status 2>/dev/null | grep -qi 'Status: active'; then
-    ufw allow "${current}/tcp" comment 'MrClock SSH current' >/dev/null 2>&1 || true
-    ufw allow "${new_port}/tcp" comment 'MrClock SSH new' >/dev/null 2>&1 || true
+    ufw allow "${current}/tcp" comment 'PGClockTB SSH current' >/dev/null 2>&1 || true
+    ufw allow "${new_port}/tcp" comment 'PGClockTB SSH new' >/dev/null 2>&1 || true
   fi
 
   if [[ "$new_port" != "$current" ]]; then
@@ -381,20 +381,20 @@ module_ssh() {
     ui_warn "SSH now listens on BOTH :${current} (old) and :${new_port} (new)."
     ui_info "Open a NEW terminal and verify:  ssh -p ${new_port} USER@HOST"
     ui_info "Keep this session open until the new login works."
-    mkdir -p "$SECUREBOX_STATE_DIR"
-    echo "$current" >"${SECUREBOX_STATE_DIR}/ssh_old_port"
-    echo "$new_port" >"${SECUREBOX_STATE_DIR}/ssh_new_port"
-    echo "pending" >"${SECUREBOX_STATE_DIR}/ssh_cutover"
+    mkdir -p "$PGCTB_STATE_DIR"
+    echo "$current" >"${PGCTB_STATE_DIR}/ssh_old_port"
+    echo "$new_port" >"${PGCTB_STATE_DIR}/ssh_new_port"
+    echo "pending" >"${PGCTB_STATE_DIR}/ssh_cutover"
 
     # Timed auto-rollback unless confirmed
-    local rollback_secs="${SECUREBOX_ANSWERS[ssh_rollback_seconds]:-${SECUREBOX_ROLLBACK_SECONDS:-120}}"
+    local rollback_secs="${PGCTB_ANSWERS[ssh_rollback_seconds]:-${PGCTB_ROLLBACK_SECONDS:-120}}"
     if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
       if declare -F schedule_timed_rollback >/dev/null 2>&1; then
         schedule_timed_rollback "ssh" "$rollback_secs" || true
       fi
     fi
 
-    if have_tty && is_true "${SECUREBOX_ANSWERS[ssh_wait_confirm]:-yes}"; then
+    if have_tty && is_true "${PGCTB_ANSWERS[ssh_wait_confirm]:-yes}"; then
       if ui_confirm "Have you successfully logged in on port ${new_port} from a NEW terminal?" "N"; then
         _ssh_write_dropin "$dropin" "$current" "$new_port" 1
         if _ssh_socket_active; then
@@ -403,9 +403,9 @@ module_ssh() {
         if _ssh_reload; then
           if have_cmd ufw; then
             ufw delete allow "${current}/tcp" >/dev/null 2>&1 || true
-            ufw allow "${new_port}/tcp" comment 'MrClock SSH' >/dev/null 2>&1 || true
+            ufw allow "${new_port}/tcp" comment 'PGClockTB SSH' >/dev/null 2>&1 || true
           fi
-          echo "done" >"${SECUREBOX_STATE_DIR}/ssh_cutover"
+          echo "done" >"${PGCTB_STATE_DIR}/ssh_cutover"
           if declare -F cancel_timed_rollback >/dev/null 2>&1; then
             cancel_timed_rollback "ssh" || true
           fi

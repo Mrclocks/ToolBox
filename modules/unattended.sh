@@ -6,7 +6,7 @@ module_unattended() {
   ui_step "Automatic security updates"
 
   if ! require_answer_yes unattended unattended "unattended upgrades not explicitly enabled"; then
-    module_skip "unattended" "unattended='${SECUREBOX_ANSWERS[unattended]:-}'"
+    module_skip "unattended" "unattended='${PGCTB_ANSWERS[unattended]:-}'"
     return 0
   fi
   if is_dry_run; then
@@ -23,7 +23,7 @@ module_unattended() {
 
   backup_file /etc/apt/apt.conf.d/20auto-upgrades
   cat >/etc/apt/apt.conf.d/20auto-upgrades <<EOF
-// Managed by MrClock ${SECUREBOX_VERSION}
+// Managed by PGClockTB ${PGCTB_VERSION}
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::Download-Upgradeable-Packages "1";

@@ -57,14 +57,14 @@ load helpers
 }
 
 @test "answered_yes is strict" {
-  declare -gA SECUREBOX_ANSWERS=()
-  SECUREBOX_ANSWERS[foo]=yes
+  declare -gA PGCTB_ANSWERS=()
+  PGCTB_ANSWERS[foo]=yes
   run answered_yes foo
   [ "$status" -eq 0 ]
-  SECUREBOX_ANSWERS[foo]=no
+  PGCTB_ANSWERS[foo]=no
   run answered_yes foo
   [ "$status" -ne 0 ]
-  unset 'SECUREBOX_ANSWERS[foo]'
+  unset 'PGCTB_ANSWERS[foo]'
   run answered_yes foo
   [ "$status" -ne 0 ]
 }

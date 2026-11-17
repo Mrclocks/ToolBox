@@ -26,9 +26,9 @@ _ufw_collect_ssh_ports() {
   local -A seen=()
   local p
 
-  p="${SECUREBOX_ANSWERS[ssh_current_port]:-}"
+  p="${PGCTB_ANSWERS[ssh_current_port]:-}"
   if is_port "$p"; then seen["$p"]=1; fi
-  p="${SECUREBOX_ANSWERS[ssh_port]:-}"
+  p="${PGCTB_ANSWERS[ssh_port]:-}"
   if is_port "$p"; then seen["$p"]=1; fi
 
   while read -r p; do
@@ -81,14 +81,14 @@ module_ufw() {
 
   # STRICT: do nothing unless user explicitly said enable UFW
   if ! require_answer_yes ufw_enable ufw "UFW enable not explicitly yes"; then
-    module_skip "ufw" "ufw_enable='${SECUREBOX_ANSWERS[ufw_enable]:-}' — firewall left untouched"
+    module_skip "ufw" "ufw_enable='${PGCTB_ANSWERS[ufw_enable]:-}' — firewall left untouched"
     return 0
   fi
 
   if is_dry_run; then
     _ufw_collect_ssh_ports
     ui_info "[dry-run] Would install ufw, allow SSH ports: ${UFW_SSH_PORTS[*]:-22}"
-    ui_info "[dry-run] Would allow extra: ${SECUREBOX_ANSWERS[ufw_ports]:-(none)}; discover=${SECUREBOX_ANSWERS[ufw_auto_discover]:-no}"
+    ui_info "[dry-run] Would allow extra: ${PGCTB_ANSWERS[ufw_ports]:-(none)}; discover=${PGCTB_ANSWERS[ufw_auto_discover]:-no}"
     ui_info "[dry-run] Would verify via 'ufw show added' then enable"
     module_ok "ufw"
     return 0
@@ -101,7 +101,7 @@ module_ufw() {
   fi
 
   # Record whether UFW was enabled before we touch it (refresh each run)
-  mkdir -p "$SECUREBOX_STATE_DIR"
+  mkdir -p "$PGCTB_STATE_DIR"
   if ufw status 2>/dev/null | grep -qi 'Status: active'; then
     state_record "ufw_was_enabled" "yes"
   else
@@ -130,7 +130,7 @@ module_ufw() {
     if have_tty; then
       if ! ui_confirm "Proceed with ufw reset? This destroys NAT/custom before.rules." "N"; then
         ui_warn "UFW reset skipped by user"
-        SECUREBOX_ANSWERS["ufw_reset"]=no
+        PGCTB_ANSWERS["ufw_reset"]=no
       fi
     fi
   fi
@@ -146,15 +146,15 @@ module_ufw() {
 
   local p
   for p in "${UFW_SSH_PORTS[@]}"; do
-    ufw allow "${p}/tcp" comment 'MrClock SSH' >/dev/null 2>&1 || true
+    ufw allow "${p}/tcp" comment 'PGClockTB SSH' >/dev/null 2>&1 || true
   done
   # Keep answer fields in sync for other modules
-  SECUREBOX_ANSWERS[ssh_current_port]="${UFW_SSH_PORTS[0]}"
-  if [[ -z "${SECUREBOX_ANSWERS[ssh_port]:-}" ]]; then
-    SECUREBOX_ANSWERS[ssh_port]="${UFW_SSH_PORTS[0]}"
+  PGCTB_ANSWERS[ssh_current_port]="${UFW_SSH_PORTS[0]}"
+  if [[ -z "${PGCTB_ANSWERS[ssh_port]:-}" ]]; then
+    PGCTB_ANSWERS[ssh_port]="${UFW_SSH_PORTS[0]}"
   fi
 
-  local ports="${SECUREBOX_ANSWERS[ufw_ports]:-}"
+  local ports="${PGCTB_ANSWERS[ufw_ports]:-}"
   local item _ufw_port _ufw_proto
   local -a skipped=()
   for item in $ports; do
@@ -163,7 +163,7 @@ module_ufw() {
       skipped+=("$item")
       continue
     fi
-    ufw allow "${_ufw_port}/${_ufw_proto}" comment "MrClock allow" >/dev/null 2>&1 || true
+    ufw allow "${_ufw_port}/${_ufw_proto}" comment "PGClockTB allow" >/dev/null 2>&1 || true
   done
   if ((${#skipped[@]})); then
     ui_warn "Skipped invalid UFW port specs: ${skipped[*]}"
@@ -178,7 +178,7 @@ module_ufw() {
         [[ "$port" == "$p" ]] && skip=1 && break
       done
       (( skip )) && continue
-      ufw allow "${port}/${proto}" comment "MrClock discovered" >/dev/null 2>&1 || true
+      ufw allow "${port}/${proto}" comment "PGClockTB discovered" >/dev/null 2>&1 || true
     done < <(discover_public_ports)
   fi
 
@@ -208,7 +208,7 @@ module_ufw() {
   systemctl enable ufw >/dev/null 2>&1 || true
 
   # Timed rollback only when interactive (no TTY ⇒ schedule_timed_rollback no-ops)
-  local rollback_secs="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+  local rollback_secs="${PGCTB_ROLLBACK_SECONDS:-120}"
   if have_cmd systemd-run && is_uint "$rollback_secs" && (( rollback_secs > 0 )) && have_tty; then
     if declare -F schedule_timed_rollback >/dev/null 2>&1; then
       schedule_timed_rollback "ufw" "$rollback_secs" || true

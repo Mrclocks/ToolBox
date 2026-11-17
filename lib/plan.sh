@@ -47,7 +47,7 @@ preflight_checks() {
 
   ui_kv "Risk level" "$risk"
   ui_box_end
-  export SECUREBOX_PREFLIGHT_RISK="$risk"
+  export PGCTB_PREFLIGHT_RISK="$risk"
 }
 
 show_plan_screen() {
@@ -63,13 +63,13 @@ show_plan_screen() {
   if answered_yes do_timesync; then
     rows+=("low|Enable chrony time sync")
   fi
-  if [[ -n "${SECUREBOX_ANSWERS[dns_id]:-}" && "${SECUREBOX_ANSWERS[dns_id]}" != "keep" ]]; then
-    rows+=("medium|DNS → ${SECUREBOX_ANSWERS[dns_primary]:-} ${SECUREBOX_ANSWERS[dns_secondary]:-}")
+  if [[ -n "${PGCTB_ANSWERS[dns_id]:-}" && "${PGCTB_ANSWERS[dns_id]}" != "keep" ]]; then
+    rows+=("medium|DNS → ${PGCTB_ANSWERS[dns_primary]:-} ${PGCTB_ANSWERS[dns_secondary]:-}")
   else
     rows+=("low|DNS kept")
   fi
-  if [[ -n "${SECUREBOX_ANSWERS[mtu]:-}" && "${SECUREBOX_ANSWERS[mtu]}" != "keep" ]]; then
-    rows+=("medium|MTU → ${SECUREBOX_ANSWERS[mtu]}")
+  if [[ -n "${PGCTB_ANSWERS[mtu]:-}" && "${PGCTB_ANSWERS[mtu]}" != "keep" ]]; then
+    rows+=("medium|MTU → ${PGCTB_ANSWERS[mtu]}")
   elif answered_yes mtu_mss_clamp; then
     rows+=("medium|TCP MSS clamping (MTU unchanged)")
   else
@@ -79,16 +79,16 @@ show_plan_screen() {
     rows+=("low|BBR + sysctl tuning")
   fi
   if answered_yes do_ssh; then
-    rows+=("high|SSH port ${SECUREBOX_ANSWERS[ssh_current_port]:-?} → ${SECUREBOX_ANSWERS[ssh_port]:-?} / harden")
+    rows+=("high|SSH port ${PGCTB_ANSWERS[ssh_current_port]:-?} → ${PGCTB_ANSWERS[ssh_port]:-?} / harden")
   fi
   if answered_yes disable_ipv6; then
     rows+=("high|Disable IPv6")
   fi
   if answered_yes block_abuse; then
-    rows+=("high|Abuse block (${SECUREBOX_ANSWERS[abuse_profile]:-minimal})")
+    rows+=("high|Abuse block (${PGCTB_ANSWERS[abuse_profile]:-minimal})")
   fi
   if answered_yes ufw_enable; then
-    local ufw_extra="ports=${SECUREBOX_ANSWERS[ufw_ports]:-none}"
+    local ufw_extra="ports=${PGCTB_ANSWERS[ufw_ports]:-none}"
     answered_yes ufw_reset && ufw_extra="${ufw_extra}; RESET"
     answered_yes ufw_auto_discover && ufw_extra="${ufw_extra}; discover"
     rows+=("high|Enable UFW (${ufw_extra})")
@@ -122,10 +122,10 @@ show_plan_screen() {
   done
 
   ui_kv "Overall risk" "$overall"
-  if [[ "${SECUREBOX_DRY_RUN:-0}" == "1" ]]; then
+  if [[ "${PGCTB_DRY_RUN:-0}" == "1" ]]; then
     ui_warn "DRY-RUN — nothing will be applied"
   fi
-  local rb="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+  local rb="${PGCTB_ROLLBACK_SECONDS:-120}"
   if is_uint "$rb" && (( rb > 0 )); then
     ui_kv "Timed rollback" "${rb}s for SSH/UFW/DNS/MTU (unless confirmed)"
   else

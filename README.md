@@ -1,4 +1,4 @@
-# MrClock ToolBox
+# PGClockTB
 
 PasarGuard ops toolbox for **Ubuntu 22–26** and **Debian 12–13**:
 hardening, SSL, reverse proxy, and PGClockMG backup/restore bridges.
@@ -14,8 +14,27 @@ curl -fsSL https://github.com/Mrclocks/ToolBox/releases/latest/download/install.
 Then:
 
 ```bash
-sudo mrclock
+sudo pgclock
 ```
+
+### Upgrading from MrClock ToolBox (< 0.4.0)
+
+Nothing to do by hand — the first run of 0.4.0 migrates automatically:
+
+| Before | After | Old path becomes |
+|---|---|---|
+| `mrclock` | `pgclock` | alias (still works) |
+| `/opt/mrclock-toolbox` | `/opt/pgclocktb` | symlink |
+| `/var/lib/securebox` | `/var/lib/pgclocktb` | symlink |
+| `/var/log/securebox` | `/var/log/pgclocktb` | symlink |
+| `/var/backups/securebox` | `/var/backups/pgclocktb` | symlink |
+| `SECUREBOX_*` env vars | `PGCTB_*` | still accepted |
+
+Symlinks keep existing acme.sh renew hooks, cron entries and armed rollbacks
+working. Files that older versions wrote under `/etc` (for example
+`sshd_config.d/00-securebox.conf`, `99-securebox-*.conf`, nft table
+`securebox`) keep their names on purpose — renaming live SSH/network drop-ins
+is not worth the risk, and Undo still finds them.
 
 ## CLI (all flags)
 
@@ -55,10 +74,10 @@ Safety:
 Examples:
 
 ```bash
-sudo mrclock --help
-sudo mrclock --one-click --ufw --ufw-ports "443 51820/udp" --ufw-discover --fail2ban
-sudo mrclock --dry-run --one-click
-sudo mrclock --verify
+sudo pgclock --help
+sudo pgclock --one-click --ufw --ufw-ports "443 51820/udp" --ufw-discover --fail2ban
+sudo pgclock --dry-run --one-click
+sudo pgclock --verify
 ```
 
 ## Features
@@ -68,7 +87,7 @@ Categorized menu:
 1. **Optimization** — Apply All, DNS/MTU/BBR, UFW, SSH, Fail2Ban, abuse block, undo
 2. **SSL Certificates** — PasarGuard Panel/Node issue + auto-renew (acme.sh)
 3. **Reverse Proxy** — HAProxy single-port (panel/node)
-4. **Backup** — Install/open PGClockBackup (ToolBox UI → upstream installer)
+4. **Backup** — Install/open PGClockBackup (PGClockTB UI → upstream installer)
 5. **Restore & Migrate** — PGClockMG wizard + redirect helpers
 
 Optimization details:
@@ -99,10 +118,10 @@ Rule #1: never lock out the admin or cut connectivity.
 - After changing the SSH port, open a **new** terminal before closing the current session.
 - Automatic never enables abuse block or UFW without asking; keeps DNS/MTU by default.
 - Prefer preserving SSH env under sudo (otherwise IPv6/admin-IP detection recover via `/proc`):
-  `sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY mrclock`
+  `sudo --preserve-env=SSH_CONNECTION,SSH_CLIENT,SSH_TTY pgclock`
 - Timed rollback arms only on a TTY (never auto-reverts headless `--one-click`).
 - Release integrity is **fail-closed**: missing `SHA256SUMS` aborts unless
-  `SECUREBOX_ALLOW_INSECURE=1`. See [docs/RELEASE.md](docs/RELEASE.md).
+  `PGCTB_ALLOW_INSECURE=1`. See [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Dev / CI
 

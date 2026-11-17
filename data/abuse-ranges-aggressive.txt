@@ -1,4 +1,4 @@
-# MrClock aggressive abuse blocklist — OPT-IN only
+# PGClockTB aggressive abuse blocklist — OPT-IN only
 # Includes noisier hosting slices. May block legitimate cloud clients.
 # Prefer the minimal profile unless you know you need this.
 

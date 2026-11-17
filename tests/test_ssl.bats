@@ -6,23 +6,23 @@ load helpers
 setup() {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/modules/ssl.sh"
-  SSL_STATE_DIR="${SECUREBOX_STATE_DIR}/ssl"
+  SSL_STATE_DIR="${PGCTB_STATE_DIR}/ssl"
   SSL_CONFIG_FILE="${SSL_STATE_DIR}/config.env"
   SSL_DEPLOY_HOOK="${SSL_STATE_DIR}/deploy-hook.sh"
   SSL_PRE_HOOK="${SSL_STATE_DIR}/acme-pre-hook.sh"
   SSL_POST_HOOK="${SSL_STATE_DIR}/acme-post-hook.sh"
   SSL_ACME_STOPPED="${SSL_STATE_DIR}/.acme-stopped-services"
-  PROXY_CONFIG_FILE="${SECUREBOX_STATE_DIR}/proxy/config.env"
-  SSL_PANEL_ROOT="${SECUREBOX_STATE_DIR}/fake-panel"
-  SSL_NODE_ROOT="${SECUREBOX_STATE_DIR}/fake-node"
+  PROXY_CONFIG_FILE="${PGCTB_STATE_DIR}/proxy/config.env"
+  SSL_PANEL_ROOT="${PGCTB_STATE_DIR}/fake-panel"
+  SSL_NODE_ROOT="${PGCTB_STATE_DIR}/fake-node"
   SSL_PANEL_CERT_DIR="${SSL_PANEL_ROOT}/certs"
   SSL_NODE_CERT_DIR="${SSL_NODE_ROOT}/certs"
-  SSL_HAPROXY_CERT_DIR="${SECUREBOX_STATE_DIR}/fake-haproxy/certs"
+  SSL_HAPROXY_CERT_DIR="${PGCTB_STATE_DIR}/fake-haproxy/certs"
   SSL_POST_HOOK_FAILED="${SSL_STATE_DIR}/acme-post-hook.failed"
-  SSL_ACME_HOME="${SECUREBOX_STATE_DIR}/acme"
+  SSL_ACME_HOME="${PGCTB_STATE_DIR}/acme"
   SSL_ACME_BIN="${SSL_ACME_HOME}/acme.sh"
-  PROXY_HAPROXY_CFG="${SECUREBOX_STATE_DIR}/haproxy.cfg"
-  mkdir -p "$SSL_STATE_DIR" "${SECUREBOX_STATE_DIR}/fake-haproxy"
+  PROXY_HAPROXY_CFG="${PGCTB_STATE_DIR}/haproxy.cfg"
+  mkdir -p "$SSL_STATE_DIR" "${PGCTB_STATE_DIR}/fake-haproxy"
 }
 
 # Stub a command on PATH for this test
@@ -95,7 +95,7 @@ SSL_EMAIL=
 EOF
   _ssl_write_deploy_hook
 
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
   [ "$status" -eq 0 ]
   [ -f "${SSL_PANEL_CERT_DIR}/demo.example.com.cer" ]
   [ -f "${SSL_PANEL_CERT_DIR}/demo.example.com.cer.key" ]
@@ -122,7 +122,7 @@ EOF
   mkdir -p "${SSL_STATE_DIR}/live"
   printf 'CERT\n' >"${SSL_STATE_DIR}/live/fullchain.cer"
   printf 'KEY\n' >"${SSL_STATE_DIR}/live/key.pem"
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
   [ "$status" -eq 0 ]
   [ ! -e "$marker" ]
 }
@@ -145,17 +145,17 @@ EOF
   mkdir -p "${SSL_STATE_DIR}/live"
   printf 'CERT\n' >"${SSL_STATE_DIR}/live/fullchain.cer"
   printf 'KEY\n' >"${SSL_STATE_DIR}/live/key.pem"
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
   [ "$status" -eq 0 ]
   [[ "$output" == *"changed=1"* ]]
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
   [ "$status" -eq 0 ]
   [[ "$output" == *"changed=0"* ]]
   # Unwritable target → non-zero exit (no silent success)
   rm -rf "$SSL_PANEL_CERT_DIR"
   mkdir -p "$SSL_PANEL_ROOT"
   printf 'x' >"$SSL_PANEL_CERT_DIR"   # a file where the dir should be
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_DEPLOY_HOOK"
   [ "$status" -ne 0 ]
   [[ "$output" == *"FAILED"* ]]
 }
@@ -165,7 +165,7 @@ EOF
   stub systemctl 'exit 1'
   stub sleep 'exit 0'
   printf 'haproxy\n' >"${SSL_STATE_DIR}/.acme-stopped-services"
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_POST_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_POST_HOOK"
   [ "$status" -ne 0 ]
   [ -f "$SSL_POST_HOOK_FAILED" ]
   grep -q haproxy "$SSL_POST_HOOK_FAILED"
@@ -174,17 +174,17 @@ EOF
   # Success clears the marker
   stub systemctl 'exit 0'
   printf 'haproxy\n' >"${SSL_STATE_DIR}/.acme-stopped-services"
-  SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_POST_HOOK"
+  PGCTB_SSL_STATE_DIR="$SSL_STATE_DIR" run bash "$SSL_POST_HOOK"
   [ "$status" -eq 0 ]
   [ ! -f "$SSL_POST_HOOK_FAILED" ]
 }
 
 @test "_ssl_panel_behind_haproxy ignores stock commented .env lines" {
-  PROXY_CONFIG_FILE="${SECUREBOX_STATE_DIR}/proxy/none.env"
+  PROXY_CONFIG_FILE="${PGCTB_STATE_DIR}/proxy/none.env"
   stub systemctl 'exit 0'   # haproxy "active"
   printf 'global\n' >"$PROXY_HAPROXY_CFG"
   ! _ssl_panel_behind_haproxy
-  printf '# MrClock ToolBox — PasarGuard panel single-port (HTTP mode)\n' >"$PROXY_HAPROXY_CFG"
+  printf '# PGClockTB — PasarGuard panel single-port (HTTP mode)\n' >"$PROXY_HAPROXY_CFG"
   _ssl_panel_behind_haproxy
 }
 
@@ -213,7 +213,7 @@ EOF
 }
 
 @test "ssl_renew_now fails when the deploy hook fails" {
-  SECUREBOX_DRY_RUN=0
+  PGCTB_DRY_RUN=0
   mkdir -p "$SSL_ACME_HOME"
   printf '#!/bin/sh\nexit 0\n' >"$SSL_ACME_BIN"
   chmod +x "$SSL_ACME_BIN"
@@ -259,7 +259,7 @@ EOF
 }
 
 @test "_ssl_env_upsert replaces previous path and comments UDS" {
-  local envf="${SECUREBOX_STATE_DIR}/panel.env"
+  local envf="${PGCTB_STATE_DIR}/panel.env"
   cat >"$envf" <<'EOF'
 UVICORN_HOST = "0.0.0.0"
 UVICORN_PORT = 8000
@@ -279,7 +279,7 @@ EOF
 }
 
 @test "_ssl_compose_upsert_env updates YAML env keys" {
-  local yml="${SECUREBOX_STATE_DIR}/compose.yml"
+  local yml="${PGCTB_STATE_DIR}/compose.yml"
   cat >"$yml" <<'EOF'
 services:
   node:
@@ -302,7 +302,7 @@ EOF
 }
 
 @test "_ssl_panel_behind_haproxy detects proxy config" {
-  local pdir="${SECUREBOX_STATE_DIR}/proxy"
+  local pdir="${PGCTB_STATE_DIR}/proxy"
   mkdir -p "$pdir"
   PROXY_CONFIG_FILE="${pdir}/config.env"
   cat >"$PROXY_CONFIG_FILE" <<'EOF'
@@ -313,8 +313,8 @@ EOF
 }
 
 @test "_ssl_apply_env_paths keeps UVICORN_SSL commented behind HAProxy" {
-  local pdir="${SECUREBOX_STATE_DIR}/proxy"
-  local panel="${SECUREBOX_STATE_DIR}/fake-pasarguard"
+  local pdir="${PGCTB_STATE_DIR}/proxy"
+  local panel="${PGCTB_STATE_DIR}/fake-pasarguard"
   mkdir -p "$pdir" "$panel" "$SSL_PANEL_CERT_DIR"
   PROXY_CONFIG_FILE="${pdir}/config.env"
   cat >"$PROXY_CONFIG_FILE" <<'EOF'
@@ -325,7 +325,7 @@ EOF
   # create /opt/pasarguard is not allowed — instead unit-test the comment path
   # via direct helper when config says haproxy panel.
   _ssl_panel_behind_haproxy
-  local envf="${SECUREBOX_STATE_DIR}/panel-haproxy.env"
+  local envf="${PGCTB_STATE_DIR}/panel-haproxy.env"
   cat >"$envf" <<'EOF'
 UVICORN_HOST = "127.0.0.1"
 UVICORN_PORT = 8000

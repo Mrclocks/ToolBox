@@ -8,11 +8,11 @@ attacker who swaps the archive can swap the checksums too.
 For each GitHub Release tag:
 
 1. `./scripts/gen-checksums.sh` (optionally `RELEASE_TAG=0.2.2`)
-   — tarball **must** contain `ToolBox-<tag>/lib/...` (not a flat root)
+   — tarball **must** contain `PGClockTB-<tag>/lib/...` (not a flat root)
 2. Sign: `cd dist && gpg --detach-sign -a -o SHA256SUMS.asc SHA256SUMS`
 3. Upload as **separate Release assets**:
    - `install.sh`
-   - `ToolBox-<tag>.tar.gz`
+   - `PGClockTB-<tag>.tar.gz`
    - `SHA256SUMS`
    - `SHA256SUMS.asc`
 
@@ -21,8 +21,8 @@ For each GitHub Release tag:
 
 ## Fail-closed policy
 
-- Missing `SHA256SUMS` → **error** (refuses install) unless `SECUREBOX_ALLOW_INSECURE=1`
+- Missing `SHA256SUMS` → **error** (refuses install) unless `PGCTB_ALLOW_INSECURE=1`
 - Present `SHA256SUMS.asc` → must verify with `gpg` (or allow insecure)
-- Optional pin: `SECUREBOX_GPG_FINGERPRINT=<40-char fingerprint>` requires a matching `.asc`
+- Optional pin: `PGCTB_GPG_FINGERPRINT=<40-char fingerprint>` requires a matching `.asc`
 
 Do **not** commit `SHA256SUMS` into the repository as the trust root.

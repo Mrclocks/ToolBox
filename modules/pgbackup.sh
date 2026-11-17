@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Module: Backup — ToolBox UI bridge to PGClockBackup (PGClockMG)
+# Module: Backup — PGClockTB UI bridge to PGClockBackup (PGClockMG)
 # shellcheck shell=bash
 
 pgbackup_install() {

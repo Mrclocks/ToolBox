@@ -13,19 +13,19 @@ fi
 export BATS_TEST_TMPDIR
 
 # Minimal stubs so sourcing modules does not explode
-export SECUREBOX_ROOT="$REPO_ROOT"
-export SECUREBOX_BACKUP_ROOT="${BATS_TEST_TMPDIR:-/tmp}/securebox-bak"
-export SECUREBOX_LOG_DIR="${BATS_TEST_TMPDIR:-/tmp}/securebox-log"
-export SECUREBOX_STATE_DIR="${BATS_TEST_TMPDIR:-/tmp}/securebox-state"
-export SECUREBOX_RUN_ID="test-run"
-mkdir -p "$SECUREBOX_BACKUP_ROOT" "$SECUREBOX_LOG_DIR" "$SECUREBOX_STATE_DIR"
+export PGCTB_ROOT="$REPO_ROOT"
+export PGCTB_BACKUP_ROOT="${BATS_TEST_TMPDIR:-/tmp}/pgclocktb-bak"
+export PGCTB_LOG_DIR="${BATS_TEST_TMPDIR:-/tmp}/pgclocktb-log"
+export PGCTB_STATE_DIR="${BATS_TEST_TMPDIR:-/tmp}/pgclocktb-state"
+export PGCTB_RUN_ID="test-run"
+mkdir -p "$PGCTB_BACKUP_ROOT" "$PGCTB_LOG_DIR" "$PGCTB_STATE_DIR"
 
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/lib/common.sh"
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/lib/ui.sh"
 
-declare -gA SECUREBOX_ANSWERS=()
+declare -gA PGCTB_ANSWERS=()
 
 # Silence UI in tests
 ui_info() { :; }

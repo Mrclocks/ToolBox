@@ -1,59 +1,59 @@
 #!/usr/bin/env bash
-# SecureBox — module runner / orchestration
+# PGClockTB — module runner / orchestration
 # shellcheck shell=bash
 
 source_modules() {
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/update.sh"
+  source "${PGCTB_ROOT}/modules/update.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/timesync.sh"
+  source "${PGCTB_ROOT}/modules/timesync.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/dns.sh"
+  source "${PGCTB_ROOT}/modules/dns.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/mtu.sh"
+  source "${PGCTB_ROOT}/modules/mtu.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/bbr.sh"
+  source "${PGCTB_ROOT}/modules/bbr.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/abuse.sh"
+  source "${PGCTB_ROOT}/modules/abuse.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/ufw.sh"
+  source "${PGCTB_ROOT}/modules/ufw.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/ssh.sh"
+  source "${PGCTB_ROOT}/modules/ssh.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/fail2ban.sh"
+  source "${PGCTB_ROOT}/modules/fail2ban.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/ipv6.sh"
+  source "${PGCTB_ROOT}/modules/ipv6.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/unattended.sh"
+  source "${PGCTB_ROOT}/modules/unattended.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/services.sh"
+  source "${PGCTB_ROOT}/modules/services.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/logs.sh"
+  source "${PGCTB_ROOT}/modules/logs.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/restore.sh"
+  source "${PGCTB_ROOT}/modules/restore.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/verify.sh"
+  source "${PGCTB_ROOT}/modules/verify.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/report.sh"
+  source "${PGCTB_ROOT}/modules/report.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/ssl.sh"
+  source "${PGCTB_ROOT}/modules/ssl.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/proxy.sh"
+  source "${PGCTB_ROOT}/modules/proxy.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/pgbackup.sh"
+  source "${PGCTB_ROOT}/modules/pgbackup.sh"
   # shellcheck disable=SC1091
-  source "${SECUREBOX_ROOT}/modules/pgrestore.sh"
+  source "${PGCTB_ROOT}/modules/pgrestore.sh"
 }
 
 run_pipeline_all() {
   ui_box_start "Applying only your answers"
   local k
   for k in apply_mode dns_id dns_primary mtu ssh_port block_abuse ufw_enable enable_fail2ban disable_ipv6 unattended disable_unused do_update do_bbr do_ssh do_logs; do
-    ui_kv "$k" "${SECUREBOX_ANSWERS[$k]:-(unset)}"
+    ui_kv "$k" "${PGCTB_ANSWERS[$k]:-(unset)}"
   done
   ui_box_end
 
-  if [[ "${SECUREBOX_DRY_RUN:-0}" == "1" ]]; then
+  if [[ "${PGCTB_DRY_RUN:-0}" == "1" ]]; then
     ui_warn "DRY-RUN mode — modules will skip live changes where supported"
   fi
 
@@ -90,8 +90,8 @@ run_pipeline_all() {
       return 1
     fi
   done
-  if ((${#SECUREBOX_FAILED_MODULES[@]} > 0)); then
-    ui_error "One or more modules failed: ${SECUREBOX_FAILED_MODULES[*]}"
+  if ((${#PGCTB_FAILED_MODULES[@]} > 0)); then
+    ui_error "One or more modules failed: ${PGCTB_FAILED_MODULES[*]}"
     return 1
   fi
   return 0

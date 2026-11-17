@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MrClock / SecureBox — terminal UI
+# PGClockTB — terminal UI
 # shellcheck shell=bash
 
 # Colors (safe when not a TTY) — orange theme
@@ -64,12 +64,12 @@ ui_banner() {
 
   cat <<EOF
 ${C_ORANGE}${C_BOLD}
-   __  __       ____ _            _
-  |  \/  |_ __ / ___| | ___   ___| | __
-  | |\/| | '__| |   | |/ _ \ / __| |/ /
-  | |  | | |  | |___| | (_) | (__|   <
-  |_|  |_|_|   \____|_|\___/ \___|_|\_\\
-${C_RESET}${C_DIM}   PasarGuard Ops Toolbox  ·  v${SECUREBOX_VERSION}${C_RESET}
+  ____   ____  ____ _            _    _____ ____
+ |  _ \\ / ___|/ ___| | ___   ___| | _|_   _| __ )
+ | |_) | |  _| |   | |/ _ \\ / __| |/ / | | |  _ \\
+ |  __/| |_| | |___| | (_) | (__|   <  | | | |_) |
+ |_|    \\____|\\____|_|\\___/ \\___|_|\\_\\ |_| |____/
+${C_RESET}${C_DIM}   PasarGuard Toolbox  ·  v${PGCTB_VERSION}${C_RESET}
 EOF
   ui_line 64
   ui_server_status_panel

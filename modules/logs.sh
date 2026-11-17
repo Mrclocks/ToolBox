@@ -112,11 +112,11 @@ module_logs() {
   ui_step "Clean Ubuntu & Docker logs (free disk)"
 
   if ! require_answer_yes do_logs logs "log cleanup not explicitly enabled"; then
-    module_skip "logs" "do_logs='${SECUREBOX_ANSWERS[do_logs]:-}'"
+    module_skip "logs" "do_logs='${PGCTB_ANSWERS[do_logs]:-}'"
     return 0
   fi
   if is_dry_run; then
-    ui_info "[dry-run] Would clean journal/rotated logs (truncate_active=${SECUREBOX_ANSWERS[logs_truncate_active]:-no} docker_prune=${SECUREBOX_ANSWERS[logs_docker_prune]:-no})"
+    ui_info "[dry-run] Would clean journal/rotated logs (truncate_active=${PGCTB_ANSWERS[logs_truncate_active]:-no} docker_prune=${PGCTB_ANSWERS[logs_docker_prune]:-no})"
     module_ok "logs"
     return 0
   fi

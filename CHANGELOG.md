@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.0 — 2026-11-17
+
+Roadmap to 1.0.0: 0.4 rename · 0.5 safety core · 0.6 menus & levels ·
+0.7 SSL v2 · 0.8 HAProxy v2 · 0.9 Doctor & port check · 0.10 Telegram ·
+1.0 signed self-update.
+
+### Changed
+- **Renamed to PGClockTB** (was MrClock ToolBox): banner, messages, docs
+- Command is now **`pgclock`**; `mrclock` stays as an alias
+- Install dir `/opt/pgclocktb`; state / log / backup dirs
+  `/var/lib/pgclocktb`, `/var/log/pgclocktb`, `/var/backups/pgclocktb`
+- Env vars `PGCTB_*`; legacy `SECUREBOX_*` overrides are still honoured
+- Release asset `PGClockTB-<tag>.tar.gz` (installer still accepts `ToolBox-<tag>`)
+
+### Migration (automatic, first non-dry run)
+- Old dirs are moved and replaced by symlinks (acme.sh hooks, cron, armed
+  rollbacks keep working); if both exist, files are merged without overwrite
+- `/opt/mrclock-toolbox` becomes a symlink (only if it is a ToolBox tree)
+- `/etc` artifacts written by older versions keep their names (safety)
+- HAProxy panel detection accepts both old and new config markers
+
+### Tests
+- Real `install.sh` helpers are sourced in tests (`PGCTB_INSTALL_LIB_ONLY=1`)
+- Migration, launchers, legacy env and marker compat covered (101 tests)
+
+
 ## 0.3.9 — 2026-11-17
 
 ### Fixed

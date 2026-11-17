@@ -19,13 +19,13 @@ module_fail2ban() {
   ui_step "Fail2Ban"
 
   if ! require_answer_yes enable_fail2ban fail2ban "Fail2Ban not explicitly enabled"; then
-    module_skip "fail2ban" "enable_fail2ban='${SECUREBOX_ANSWERS[enable_fail2ban]:-}'"
+    module_skip "fail2ban" "enable_fail2ban='${PGCTB_ANSWERS[enable_fail2ban]:-}'"
     return 0
   fi
 
   local ssh_port new_port ports
-  ssh_port="${SECUREBOX_ANSWERS[ssh_current_port]:-22}"
-  new_port="${SECUREBOX_ANSWERS[ssh_port]:-$ssh_port}"
+  ssh_port="${PGCTB_ANSWERS[ssh_current_port]:-22}"
+  new_port="${PGCTB_ANSWERS[ssh_port]:-$ssh_port}"
   if [[ "$new_port" != "$ssh_port" ]]; then
     ports="${ssh_port},${new_port}"
   else
@@ -33,9 +33,9 @@ module_fail2ban() {
   fi
 
   local bantime findtime maxretry
-  bantime="${SECUREBOX_ANSWERS[f2b_bantime]:-1h}"
-  findtime="${SECUREBOX_ANSWERS[f2b_findtime]:-10m}"
-  maxretry="${SECUREBOX_ANSWERS[f2b_maxretry]:-4}"
+  bantime="${PGCTB_ANSWERS[f2b_bantime]:-1h}"
+  findtime="${PGCTB_ANSWERS[f2b_findtime]:-10m}"
+  maxretry="${PGCTB_ANSWERS[f2b_maxretry]:-4}"
 
   local backend="auto"
   if [[ ! -f /var/log/auth.log ]]; then
@@ -67,7 +67,7 @@ module_fail2ban() {
   backup_file /etc/fail2ban/jail.d/securebox.conf
 
   cat >/etc/fail2ban/jail.d/securebox.conf <<EOF
-# Managed by MrClock ${SECUREBOX_VERSION}
+# Managed by PGClockTB ${PGCTB_VERSION}
 [DEFAULT]
 bantime  = ${bantime}
 findtime = ${findtime}

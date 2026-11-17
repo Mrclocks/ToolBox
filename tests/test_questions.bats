@@ -14,14 +14,14 @@ setup() {
 
 @test "defaults_auto_all is low-risk" {
   defaults_auto_all
-  [ "${SECUREBOX_ANSWERS[do_update]}" = "no" ]
-  [ "${SECUREBOX_ANSWERS[do_logs]}" = "no" ]
-  [ "${SECUREBOX_ANSWERS[disable_unused]}" = "no" ]
-  [ "${SECUREBOX_ANSWERS[block_abuse]}" = "no" ]
-  [ "${SECUREBOX_ANSWERS[ufw_enable]}" = "no" ]
-  [ "${SECUREBOX_ANSWERS[mtu]}" = "keep" ]
-  [ "${SECUREBOX_ANSWERS[dns_id]}" = "keep" ]
-  [ "${SECUREBOX_ANSWERS[logs_docker_prune]}" = "no" ]
+  [ "${PGCTB_ANSWERS[do_update]}" = "no" ]
+  [ "${PGCTB_ANSWERS[do_logs]}" = "no" ]
+  [ "${PGCTB_ANSWERS[disable_unused]}" = "no" ]
+  [ "${PGCTB_ANSWERS[block_abuse]}" = "no" ]
+  [ "${PGCTB_ANSWERS[ufw_enable]}" = "no" ]
+  [ "${PGCTB_ANSWERS[mtu]}" = "keep" ]
+  [ "${PGCTB_ANSWERS[dns_id]}" = "keep" ]
+  [ "${PGCTB_ANSWERS[logs_docker_prune]}" = "no" ]
 }
 
 @test "recommend_mtu prefers keep" {

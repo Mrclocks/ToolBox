@@ -6,13 +6,13 @@ load helpers
 setup() {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/lib/pgclockmg.sh"
-  PG_WIZARD_DIR="${SECUREBOX_STATE_DIR}/fake-wizard"
-  PG_BACKUP_DIR="${SECUREBOX_STATE_DIR}/fake-backup"
+  PG_WIZARD_DIR="${PGCTB_STATE_DIR}/fake-wizard"
+  PG_BACKUP_DIR="${PGCTB_STATE_DIR}/fake-backup"
   mkdir -p "$PG_WIZARD_DIR" "${PG_BACKUP_DIR}/backup_panel"
 }
 
 @test "_pgmg_detect_service_port reads --port from unit file" {
-  local unit="${SECUREBOX_STATE_DIR}/pg-migrator.service"
+  local unit="${PGCTB_STATE_DIR}/pg-migrator.service"
   cat >"$unit" <<'EOF'
 [Service]
 ExecStart=/opt/pg-migrator/.venv/bin/python -m uvicorn app:app --port 7010
@@ -23,7 +23,7 @@ EOF
 }
 
 @test "_pgmg_detect_service_port falls back to default" {
-  run _pgmg_detect_service_port "${SECUREBOX_STATE_DIR}/missing.service" "7001"
+  run _pgmg_detect_service_port "${PGCTB_STATE_DIR}/missing.service" "7001"
   [ "$output" = "7001" ]
 }
 
@@ -46,7 +46,7 @@ EOF
 }
 
 @test "_pgmg_run_installer dry-run succeeds" {
-  SECUREBOX_DRY_RUN=1
+  PGCTB_DRY_RUN=1
   run _pgmg_run_installer install-backup 7001
   [ "$status" -eq 0 ]
 }

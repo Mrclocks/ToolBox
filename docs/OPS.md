@@ -1,6 +1,6 @@
 # Ops guide — SSL, Reverse Proxy, Backup
 
-Short English reference for the categorized ToolBox menus.
+Short English reference for the categorized PGClockTB menus.
 
 ## Recommended order
 
@@ -17,7 +17,7 @@ Short English reference for the categorized ToolBox menus.
 | Panel key | `/var/lib/pasarguard/certs/<domain>.cer.key` |
 | Node cert | `/var/lib/pg-node/certs/ssl_cert.pem` |
 | Node key | `/var/lib/pg-node/certs/ssl_key.pem` |
-| Live copy | `/var/lib/securebox/ssl/live/` |
+| Live copy | `/var/lib/pgclocktb/ssl/live/` |
 | HAProxy PEM | `/etc/haproxy/certs/<domain>.pem` |
 
 Menu:
@@ -32,8 +32,8 @@ Preflight checks DNS (soft: all A/AAAA answers vs. every local address; behind
 NAT it says "cannot verify" instead of warning) and port **80**. If
 HAProxy/nginx/caddy hold `:80`, ACME **pre/post hooks** stop them briefly for
 HTTP-01 (including cron renew), then restore. If the post-hook cannot restart a
-service it retries, logs to syslog (`mrclock-acme`), and leaves
-`/var/lib/securebox/ssl/acme-post-hook.failed`; Status / Renew report it.
+service it retries, logs to syslog (`pgclocktb-acme`), and leaves
+`/var/lib/pgclocktb/ssl/acme-post-hook.failed`; Status / Renew report it.
 
 The deploy hook exits non-zero on any failed copy, HAProxy reload or compose
 restart, so **Renew now** only reports success when deploy really succeeded.
@@ -42,7 +42,7 @@ Restarts are skipped when the certificate did not change since the last deploy.
 State files (`ssl/config.env`, `proxy/config.env`) are plain `KEY=value` and are
 **parsed, never sourced** — nothing in them is executed.
 
-After **Issue / Setup**, ToolBox **automatically** writes paths into:
+After **Issue / Setup**, PGClockTB **automatically** writes paths into:
 
 - Panel: `/opt/pasarguard/.env` → `UVICORN_SSL_CERTFILE`, `UVICORN_SSL_KEYFILE` only
   (`UVICORN_PORT` is never changed; `UVICORN_UDS` is commented for direct TLS)
@@ -78,7 +78,7 @@ HAProxy only — aligned with [PasarGuard single-port](https://docs.pasarguard.o
 
 ## Backup / Restore & Migrate
 
-Bridges to [PGClockMG](https://github.com/Mrclocks/PGClockMG) with ToolBox UI:
+Bridges to [PGClockMG](https://github.com/Mrclocks/PGClockMG) with PGClockTB UI:
 
 | Menu | Upstream |
 |------|----------|

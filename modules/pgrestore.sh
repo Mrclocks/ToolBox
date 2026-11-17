@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Module: Restore & Migrate — ToolBox UI bridge to PGClockMG wizard
+# Module: Restore & Migrate — PGClockTB UI bridge to PGClockMG wizard
 # shellcheck shell=bash
 
 pgrestore_install() {

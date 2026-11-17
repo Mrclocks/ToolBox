@@ -14,8 +14,8 @@ setup() {
 }
 
 @test "module_bbr dry-run mentions modules-load and tc" {
-  declare -gA SECUREBOX_ANSWERS=([do_bbr]=yes)
-  SECUREBOX_DRY_RUN=1
+  declare -gA PGCTB_ANSWERS=([do_bbr]=yes)
+  PGCTB_DRY_RUN=1
   msgs=()
   ui_info() { msgs+=("$*"); }
   module_ok() { :; }

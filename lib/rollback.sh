@@ -2,21 +2,21 @@
 # Timed auto-rollback via systemd-run (SSH/UFW/DNS/MTU)
 # shellcheck shell=bash
 
-SECUREBOX_ROLLBACK_DIR="${SECUREBOX_STATE_DIR}/rollback"
+PGCTB_ROLLBACK_DIR="${PGCTB_STATE_DIR}/rollback"
 
 # Default armed window (seconds). 0 = disabled.
-SECUREBOX_ROLLBACK_SECONDS="${SECUREBOX_ROLLBACK_SECONDS:-120}"
+PGCTB_ROLLBACK_SECONDS="${PGCTB_ROLLBACK_SECONDS:-120}"
 
 _rollback_disarm_prior() {
   # Stop any previous timer/unit for this kind. Does NOT touch a script path
   # that the caller is about to publish (pass keep_script to preserve it).
   local kind="$1"
   local keep_script="${2:-}"
-  mkdir -p "$SECUREBOX_ROLLBACK_DIR"
+  mkdir -p "$PGCTB_ROLLBACK_DIR"
 
   local unit=""
-  if [[ -f "${SECUREBOX_ROLLBACK_DIR}/${kind}.unit" ]]; then
-    unit="$(tr -d '[:space:]' <"${SECUREBOX_ROLLBACK_DIR}/${kind}.unit")"
+  if [[ -f "${PGCTB_ROLLBACK_DIR}/${kind}.unit" ]]; then
+    unit="$(tr -d '[:space:]' <"${PGCTB_ROLLBACK_DIR}/${kind}.unit")"
   fi
   if [[ -n "$unit" ]] && have_cmd systemctl; then
     systemctl stop "${unit}.timer" >/dev/null 2>&1 || true
@@ -24,12 +24,12 @@ _rollback_disarm_prior() {
     systemctl reset-failed "$unit" >/dev/null 2>&1 || true
     systemctl reset-failed "${unit}.timer" >/dev/null 2>&1 || true
   fi
-  rm -f "${SECUREBOX_ROLLBACK_DIR}/${kind}.unit" \
-        "${SECUREBOX_ROLLBACK_DIR}/${kind}.script" \
-        "${SECUREBOX_ROLLBACK_DIR}/${kind}.confirmed" 2>/dev/null || true
+  rm -f "${PGCTB_ROLLBACK_DIR}/${kind}.unit" \
+        "${PGCTB_ROLLBACK_DIR}/${kind}.script" \
+        "${PGCTB_ROLLBACK_DIR}/${kind}.confirmed" 2>/dev/null || true
 
   local f
-  for f in "${SECUREBOX_ROLLBACK_DIR}/${kind}"-*.sh; do
+  for f in "${PGCTB_ROLLBACK_DIR}/${kind}"-*.sh; do
     [[ -e "$f" ]] || continue
     if [[ -n "$keep_script" && "$f" == "$keep_script" ]]; then
       continue
@@ -40,7 +40,7 @@ _rollback_disarm_prior() {
 
 schedule_timed_rollback() {
   local kind="$1"
-  local seconds="${2:-${SECUREBOX_ROLLBACK_SECONDS:-120}}"
+  local seconds="${2:-${PGCTB_ROLLBACK_SECONDS:-120}}"
   is_uint "$seconds" || return 1
   (( seconds > 0 )) || return 0
 
@@ -56,28 +56,28 @@ schedule_timed_rollback() {
     return 1
   }
 
-  mkdir -p "$SECUREBOX_ROLLBACK_DIR"
+  mkdir -p "$PGCTB_ROLLBACK_DIR"
   local stamp unit script
   stamp="$(date +%s)"
   unit="securebox-rollback-${kind}-${stamp}"
-  script="${SECUREBOX_ROLLBACK_DIR}/${kind}-${stamp}.sh"
+  script="${PGCTB_ROLLBACK_DIR}/${kind}-${stamp}.sh"
 
   # Disarm ANY prior rollback for this kind BEFORE writing the new script
   _rollback_disarm_prior "$kind"
 
-  local run_id="$SECUREBOX_RUN_ID"
-  local backup_root="${SECUREBOX_BACKUP_ROOT}/${run_id}"
-  local state_dir="$SECUREBOX_STATE_DIR"
+  local run_id="$PGCTB_RUN_ID"
+  local backup_root="${PGCTB_BACKUP_ROOT}/${run_id}"
+  local state_dir="$PGCTB_STATE_DIR"
 
   cat >"$script" <<EOF
 #!/usr/bin/env bash
-# Auto-generated MrClock timed rollback for ${kind}
+# Auto-generated PGClockTB timed rollback for ${kind}
 set -euo pipefail
-MARKER="${SECUREBOX_ROLLBACK_DIR}/${kind}.confirmed"
+MARKER="${PGCTB_ROLLBACK_DIR}/${kind}.confirmed"
 if [[ -f "\$MARKER" ]]; then
   exit 0
 fi
-logger -t mrclock "Timed rollback firing for ${kind} (run ${run_id})"
+logger -t pgclocktb "Timed rollback firing for ${kind} (run ${run_id})"
 case "${kind}" in
   ssh)
     if [[ -d "${backup_root}/etc/ssh" ]]; then
@@ -132,14 +132,14 @@ case "${kind}" in
     fi
     ;;
 esac
-rm -f "$script" "${SECUREBOX_ROLLBACK_DIR}/${kind}.unit" "${SECUREBOX_ROLLBACK_DIR}/${kind}.script"
+rm -f "$script" "${PGCTB_ROLLBACK_DIR}/${kind}.unit" "${PGCTB_ROLLBACK_DIR}/${kind}.script"
 EOF
   chmod 700 "$script"
 
   if systemd-run --unit="$unit" --on-active="${seconds}s" --timer-property=AccuracySec=1s \
       /bin/bash "$script" >/dev/null 2>&1; then
-    printf '%s\n' "$unit" >"${SECUREBOX_ROLLBACK_DIR}/${kind}.unit"
-    printf '%s\n' "$script" >"${SECUREBOX_ROLLBACK_DIR}/${kind}.script"
+    printf '%s\n' "$unit" >"${PGCTB_ROLLBACK_DIR}/${kind}.unit"
+    printf '%s\n' "$script" >"${PGCTB_ROLLBACK_DIR}/${kind}.script"
     # Sanity: script must still exist after arming (regression guard)
     if [[ ! -f "$script" ]]; then
       ui_error "Timed rollback for ${kind}: script missing after arm — not advertising rollback"
@@ -155,12 +155,12 @@ EOF
 
 cancel_timed_rollback() {
   local kind="$1"
-  mkdir -p "$SECUREBOX_ROLLBACK_DIR"
+  mkdir -p "$PGCTB_ROLLBACK_DIR"
   # Marker first so a race with the timer is a no-op
-  touch "${SECUREBOX_ROLLBACK_DIR}/${kind}.confirmed"
+  touch "${PGCTB_ROLLBACK_DIR}/${kind}.confirmed"
   _rollback_disarm_prior "$kind"
   # Keep confirmed marker so a late-firing copy still exits
-  touch "${SECUREBOX_ROLLBACK_DIR}/${kind}.confirmed"
+  touch "${PGCTB_ROLLBACK_DIR}/${kind}.confirmed"
   return 0
 }
 
@@ -176,7 +176,7 @@ confirm_timed_changes() {
 rollback_is_armed() {
   local kind="$1"
   local script=""
-  [[ -f "${SECUREBOX_ROLLBACK_DIR}/${kind}.script" ]] || return 1
-  script="$(tr -d '[:space:]' <"${SECUREBOX_ROLLBACK_DIR}/${kind}.script")"
+  [[ -f "${PGCTB_ROLLBACK_DIR}/${kind}.script" ]] || return 1
+  script="$(tr -d '[:space:]' <"${PGCTB_ROLLBACK_DIR}/${kind}.script")"
   [[ -n "$script" && -f "$script" ]]
 }

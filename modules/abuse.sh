@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Module: abuse IP range blocking + anti-abuse posture
-# Applies ONLY when SECUREBOX_ANSWERS[block_abuse] is explicitly yes.
+# Applies ONLY when PGCTB_ANSWERS[block_abuse] is explicitly yes.
 # shellcheck shell=bash
 
-# Resolve at call time (not source time) so SECUREBOX_DATA cannot go stale.
+# Resolve at call time (not source time) so PGCTB_DATA cannot go stale.
 _abuse_ranges_minimal() {
-  printf '%s\n' "${SECUREBOX_DATA}/abuse-ranges.txt"
+  printf '%s\n' "${PGCTB_DATA}/abuse-ranges.txt"
 }
 _abuse_ranges_aggressive() {
-  printf '%s\n' "${SECUREBOX_DATA}/abuse-ranges-aggressive.txt"
+  printf '%s\n' "${PGCTB_DATA}/abuse-ranges-aggressive.txt"
 }
 
 _abuse_load_cidrs() {
@@ -27,8 +27,8 @@ _abuse_load_cidrs() {
 }
 
 _abuse_resolve_file() {
-  local profile="${SECUREBOX_ANSWERS[abuse_profile]:-minimal}"
-  local custom="${SECUREBOX_ANSWERS[abuse_file]:-}"
+  local profile="${PGCTB_ANSWERS[abuse_profile]:-minimal}"
+  local custom="${PGCTB_ANSWERS[abuse_file]:-}"
   local minimal aggressive
   minimal="$(_abuse_ranges_minimal)"
   aggressive="$(_abuse_ranges_aggressive)"
@@ -131,7 +131,7 @@ _abuse_apply_nft() {
   mkdir -p /etc/nftables.d
   {
     echo '#!/usr/sbin/nft -f'
-    echo '# Managed by MrClock — safe reload on boot'
+    echo '# Managed by PGClockTB — safe reload on boot'
     echo 'table inet securebox'
     echo 'delete table inet securebox'
     nft list table inet securebox
@@ -153,19 +153,19 @@ _abuse_apply_nft() {
 _abuse_apply_iptables() {
   local -a cidrs=("$@")
   local loaded=0 failed=0
-  iptables -N SECUREBOX_ABUSE 2>/dev/null || iptables -F SECUREBOX_ABUSE
-  iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-  iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-  iptables -I INPUT 1 -j SECUREBOX_ABUSE
+  iptables -N PGCTB_ABUSE 2>/dev/null || iptables -F PGCTB_ABUSE
+  iptables -D INPUT -j PGCTB_ABUSE 2>/dev/null || true
+  iptables -D OUTPUT -j PGCTB_ABUSE 2>/dev/null || true
+  iptables -I INPUT 1 -j PGCTB_ABUSE
 
   # Allow established/related before drops so outbound replies work
-  iptables -A SECUREBOX_ABUSE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
-    || iptables -A SECUREBOX_ABUSE -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
+  iptables -A PGCTB_ABUSE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
+    || iptables -A PGCTB_ABUSE -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null \
     || true
 
   local c
   for c in "${cidrs[@]}"; do
-    if iptables -A SECUREBOX_ABUSE -s "$c" -j DROP 2>/dev/null; then
+    if iptables -A PGCTB_ABUSE -s "$c" -j DROP 2>/dev/null; then
       loaded=$((loaded + 1))
     else
       failed=$((failed + 1))
@@ -207,10 +207,10 @@ _abuse_remove_all() {
     rm -f /etc/nftables.d/securebox-abuse.nft 2>/dev/null || true
   fi
   if have_cmd iptables; then
-    iptables -D INPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-    iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
-    iptables -F SECUREBOX_ABUSE 2>/dev/null || true
-    iptables -X SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -D INPUT -j PGCTB_ABUSE 2>/dev/null || true
+    iptables -D OUTPUT -j PGCTB_ABUSE 2>/dev/null || true
+    iptables -F PGCTB_ABUSE 2>/dev/null || true
+    iptables -X PGCTB_ABUSE 2>/dev/null || true
     if have_cmd netfilter-persistent; then
       netfilter-persistent save >/dev/null 2>&1 || true
     elif [[ -d /etc/iptables ]]; then
@@ -223,7 +223,7 @@ _abuse_is_active() {
   if have_cmd nft && nft list table inet securebox >/dev/null 2>&1; then
     return 0
   fi
-  if have_cmd iptables && iptables -L SECUREBOX_ABUSE -n >/dev/null 2>&1; then
+  if have_cmd iptables && iptables -L PGCTB_ABUSE -n >/dev/null 2>&1; then
     return 0
   fi
   return 1
@@ -235,7 +235,7 @@ _abuse_repair_outbound() {
     nft flush chain inet securebox output 2>/dev/null || true
   fi
   if have_cmd iptables; then
-    iptables -D OUTPUT -j SECUREBOX_ABUSE 2>/dev/null || true
+    iptables -D OUTPUT -j PGCTB_ABUSE 2>/dev/null || true
   fi
 }
 
@@ -247,25 +247,25 @@ module_abuse() {
   # STRICT: never block unless user explicitly said yes
   if ! require_answer_yes block_abuse abuse "user did not enable abuse IP blocking"; then
     if _abuse_is_active; then
-      ui_warn "Abuse blocking answered NO, but previous MrClock abuse rules are still active."
+      ui_warn "Abuse blocking answered NO, but previous PGClockTB abuse rules are still active."
       local remove=no
       if have_tty; then
-        if ui_confirm "Remove previously enabled MrClock abuse rules?" "N"; then
+        if ui_confirm "Remove previously enabled PGClockTB abuse rules?" "N"; then
           remove=yes
         fi
       else
         ui_info "Non-interactive: leaving existing abuse rules in place (will not delete without ask)."
       fi
       if [[ "$remove" == "yes" ]]; then
-        ui_info "Removing previous MrClock abuse rules..."
+        ui_info "Removing previous PGClockTB abuse rules..."
         _abuse_remove_all
       else
         ui_info "Keeping existing abuse rules."
       fi
     else
-      ui_info "Abuse blocking disabled — no active MrClock abuse rules."
+      ui_info "Abuse blocking disabled — no active PGClockTB abuse rules."
     fi
-    module_skip "abuse" "block_abuse!=yes (answer='${SECUREBOX_ANSWERS[block_abuse]:-}')"
+    module_skip "abuse" "block_abuse!=yes (answer='${PGCTB_ANSWERS[block_abuse]:-}')"
     return 0
   fi
 
@@ -284,7 +284,7 @@ module_abuse() {
     return 0
   fi
 
-  local profile="${SECUREBOX_ANSWERS[abuse_profile]:-minimal}"
+  local profile="${PGCTB_ANSWERS[abuse_profile]:-minimal}"
   ui_info "Loaded ${#CIDRS[@]} CIDR ranges from $(basename "$file") [profile=${profile}]"
   _abuse_harden_services
 

@@ -6,15 +6,15 @@ load helpers
 setup() {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/modules/proxy.sh"
-  PROXY_STATE_DIR="${SECUREBOX_STATE_DIR}/proxy"
+  PROXY_STATE_DIR="${PGCTB_STATE_DIR}/proxy"
   PROXY_CONFIG_FILE="${PROXY_STATE_DIR}/config.env"
-  PROXY_HAPROXY_CERT_DIR="${SECUREBOX_STATE_DIR}/haproxy-certs"
-  PROXY_HAPROXY_CFG="${SECUREBOX_STATE_DIR}/haproxy.cfg"
+  PROXY_HAPROXY_CERT_DIR="${PGCTB_STATE_DIR}/haproxy-certs"
+  PROXY_HAPROXY_CFG="${PGCTB_STATE_DIR}/haproxy.cfg"
   PROXY_HAPROXY_CFG_BAK="${PROXY_STATE_DIR}/haproxy.cfg.pre-mrclock"
   PROXY_BIND_IPV6=yes
   PROXY_HAPROXY_CFG_LAST="${PROXY_STATE_DIR}/haproxy.cfg.last"
-  SSL_CONFIG_FILE="${SECUREBOX_STATE_DIR}/ssl/config.env"
-  SSL_PANEL_CERT_DIR="${SECUREBOX_STATE_DIR}/no-panel-certs"
+  SSL_CONFIG_FILE="${PGCTB_STATE_DIR}/ssl/config.env"
+  SSL_PANEL_CERT_DIR="${PGCTB_STATE_DIR}/no-panel-certs"
   mkdir -p "$PROXY_STATE_DIR" "$PROXY_HAPROXY_CERT_DIR"
 }
 
@@ -44,7 +44,7 @@ setup() {
 }
 
 @test "_proxy_sync_pem_from_ssl builds combined PEM from live SSL" {
-  make_cert "${SECUREBOX_STATE_DIR}/ssl/live" panel.example.com sub.example.com
+  make_cert "${PGCTB_STATE_DIR}/ssl/live" panel.example.com sub.example.com
   run _proxy_sync_pem_from_ssl "panel.example.com"
   [ "$status" -eq 0 ]
   [ -f "${PROXY_HAPROXY_CERT_DIR}/panel.example.com.pem" ]
@@ -54,23 +54,23 @@ setup() {
 }
 
 @test "_proxy_sync_pem_from_ssl refuses a cert that does not cover the domain" {
-  make_cert "${SECUREBOX_STATE_DIR}/ssl/live" panel.example.com
+  make_cert "${PGCTB_STATE_DIR}/ssl/live" panel.example.com
   run _proxy_sync_pem_from_ssl "other.example.net"
   [ "$status" -ne 0 ]
   [ ! -f "${PROXY_HAPROXY_CERT_DIR}/other.example.net.pem" ]
 }
 
 @test "_proxy_sync_pem_from_ssl refuses a key that does not match the cert" {
-  local live="${SECUREBOX_STATE_DIR}/ssl/live"
+  local live="${PGCTB_STATE_DIR}/ssl/live"
   make_cert "$live" panel.example.com
-  make_cert "${SECUREBOX_STATE_DIR}/other" panel.example.com
-  cp "${SECUREBOX_STATE_DIR}/other/key.pem" "${live}/key.pem"
+  make_cert "${PGCTB_STATE_DIR}/other" panel.example.com
+  cp "${PGCTB_STATE_DIR}/other/key.pem" "${live}/key.pem"
   run _proxy_sync_pem_from_ssl "panel.example.com"
   [ "$status" -ne 0 ]
 }
 
 @test "_proxy_ensure_certs_for_domains fails when any domain is missing" {
-  make_cert "${SECUREBOX_STATE_DIR}/ssl/live" panel.example.com
+  make_cert "${PGCTB_STATE_DIR}/ssl/live" panel.example.com
   run _proxy_ensure_certs_for_domains panel.example.com sub.example.com
   [ "$status" -ne 0 ]
   run _proxy_ensure_certs_for_domains panel.example.com
@@ -133,7 +133,7 @@ setup() {
 
 @test "generated panel config passes real haproxy -c (when installed)" {
   command -v haproxy >/dev/null 2>&1 || skip "haproxy not installed"
-  make_cert "${SECUREBOX_STATE_DIR}/ssl/live" panel.example.com sub.example.com
+  make_cert "${PGCTB_STATE_DIR}/ssl/live" panel.example.com sub.example.com
   _proxy_ensure_certs_for_domains panel.example.com sub.example.com
   _proxy_write_haproxy_panel_cfg \
     "panel.example.com" "sub.example.com" "127.0.0.1" "8000" "443" "80" "8443" "9000"

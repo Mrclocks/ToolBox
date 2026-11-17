@@ -5,7 +5,7 @@
 module_update() {
   ui_step "System update & upgrade"
   if ! require_answer_yes do_update update "system update not explicitly enabled"; then
-    module_skip "update" "do_update='${SECUREBOX_ANSWERS[do_update]:-}'"
+    module_skip "update" "do_update='${PGCTB_ANSWERS[do_update]:-}'"
     return 0
   fi
   if is_dry_run; then
@@ -33,7 +33,7 @@ module_update() {
 
   if [[ -f /var/run/reboot-required ]]; then
     ui_warn "A reboot is required to finish kernel/package upgrades."
-    SECUREBOX_ANSWERS["reboot_needed"]=yes
+    PGCTB_ANSWERS["reboot_needed"]=yes
   fi
 
   module_ok "update"
