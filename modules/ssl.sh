@@ -16,7 +16,13 @@ SSL_POST_HOOK="${SSL_POST_HOOK:-${SSL_STATE_DIR}/acme-post-hook.sh}"
 SSL_ACME_STOPPED="${SSL_ACME_STOPPED:-${SSL_STATE_DIR}/.acme-stopped-services}"
 SSL_ACME_HOME="${SSL_ACME_HOME:-/root/.acme.sh}"
 SSL_ACME_BIN="${SSL_ACME_BIN:-${SSL_ACME_HOME}/acme.sh}"
+SSL_POST_HOOK_FAILED="${SSL_POST_HOOK_FAILED:-${SSL_STATE_DIR}/acme-post-hook.failed}"
+SSL_HAPROXY_CERT_DIR="${SSL_HAPROXY_CERT_DIR:-/etc/haproxy/certs}"
 PROXY_CONFIG_FILE="${PROXY_CONFIG_FILE:-${SECUREBOX_STATE_DIR}/proxy/config.env}"
+SSL_CONFIG_KEYS=(
+  SSL_ROLE SSL_PRIMARY SSL_DOMAINS SSL_KEY_TYPE SSL_EMAIL
+  SSL_PANEL_CERT_DIR SSL_NODE_CERT_DIR SSL_HAPROXY_CERT_DIR SSL_ACME_HOME
+)
 
 # --- detection / parsing ---------------------------------------------------
 
@@ -130,34 +136,77 @@ _ssl_port80_owner() {
   return 0
 }
 
+_ssl_local_ips() {
+  # All global addresses on this host (v4 + v6), one per line
+  if have_cmd ip; then
+    ip -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'
+  elif have_cmd hostname; then
+    hostname -I 2>/dev/null | tr ' ' '\n' | sed '/^$/d'
+  fi
+}
+
 _ssl_public_ip() {
-  local ip=""
-  if have_cmd hostname; then
-    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  # First public-looking local address (for display), else first address
+  local ip first=""
+  while IFS= read -r ip; do
+    [[ -n "$ip" ]] || continue
+    [[ -z "$first" ]] && first="$ip"
+    if ! _ssl_is_private_ip "$ip"; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  done < <(_ssl_local_ips)
+  printf '%s\n' "$first"
+}
+
+_ssl_is_private_ip() {
+  local ip="$1"
+  case "$ip" in
+    10.*|192.168.*|127.*|169.254.*) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;  # CGNAT
+    fc*|fd*|fe80:*|::1) return 0 ;;
+  esac
+  return 1
+}
+
+_ssl_resolve_domain() {
+  # All A + AAAA answers, one per line
+  local domain="$1"
+  if have_cmd dig; then
+    { dig +short A "$domain"; dig +short AAAA "$domain"; } 2>/dev/null | grep -E '^[0-9a-fA-F:.]+$' || true
+  elif have_cmd getent; then
+    getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u
+  elif have_cmd host; then
+    host "$domain" 2>/dev/null | awk '/has (IPv6 )?address/{print $NF}'
   fi
-  if [[ -z "$ip" ]] && have_cmd ip; then
-    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"
-  fi
-  printf '%s\n' "${ip:-}"
 }
 
 _ssl_dns_points_here() {
-  # Soft check: domain A/AAAA resolves to this host. Returns 0 if OK or unverifiable.
+  # 0 = a DNS answer is one of this host's addresses
+  # 1 = DNS answers exist but none is ours (or no answer at all)
+  # 2 = cannot verify (no resolver tool, or host only has private/NAT addresses)
   local domain="$1"
-  local self_ip resolved=""
-  self_ip="$(_ssl_public_ip)"
-  [[ -n "$self_ip" ]] || return 0
-  if have_cmd dig; then
-    resolved="$(dig +short A "$domain" 2>/dev/null | grep -E '^[0-9.]+$' | head -n1 || true)"
-  elif have_cmd getent; then
-    resolved="$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1; exit}')"
-  elif have_cmd host; then
-    resolved="$(host -t A "$domain" 2>/dev/null | awk '/has address/{print $4; exit}')"
-  else
-    return 0
+  local -a mine=() answers=()
+  local a m has_public=0
+  mapfile -t mine < <(_ssl_local_ips)
+  ((${#mine[@]} > 0)) || return 2
+  if ! have_cmd dig && ! have_cmd getent && ! have_cmd host; then
+    return 2
   fi
-  [[ -n "$resolved" ]] || return 1
-  [[ "$resolved" == "$self_ip" ]]
+  mapfile -t answers < <(_ssl_resolve_domain "$domain")
+  ((${#answers[@]} > 0)) || return 1
+  for a in "${answers[@]}"; do
+    for m in "${mine[@]}"; do
+      [[ "${a,,}" == "${m,,}" ]] && return 0
+    done
+  done
+  for m in "${mine[@]}"; do
+    _ssl_is_private_ip "$m" || has_public=1
+  done
+  # Behind NAT (typical cloud VM): the public IP is not on any interface
+  (( has_public )) || return 2
+  return 1
 }
 
 _ssl_preflight_issue() {
@@ -167,12 +216,15 @@ _ssl_preflight_issue() {
   self_ip="$(_ssl_public_ip)"
   ui_box_start "SSL preflight"
   ui_kv "Server IP" "${self_ip:-(unknown)}"
+  local rc
   for d in "${domains[@]}"; do
-    if _ssl_dns_points_here "$d"; then
-      ui_success "DNS looks OK for ${d}"
-    else
-      ui_warn "DNS for ${d} may not point to this server — Let's Encrypt will fail if A/AAAA is wrong"
-    fi
+    rc=0
+    _ssl_dns_points_here "$d" || rc=$?
+    case "$rc" in
+      0) ui_success "DNS looks OK for ${d}" ;;
+      2) ui_info "DNS for ${d}: cannot verify from here (NAT / private IP) — make sure A/AAAA is this server" ;;
+      *) ui_warn "DNS for ${d} does not point to this server — Let's Encrypt will fail if A/AAAA is wrong" ;;
+    esac
   done
   if _ssl_port80_busy; then
     owner="$(_ssl_port80_owner)"
@@ -273,144 +325,162 @@ _ssl_ensure_acme() {
 }
 
 _ssl_write_deploy_hook() {
+  mkdir -p "$SSL_STATE_DIR"
   cat >"$SSL_DEPLOY_HOOK" <<'HOOK'
 #!/usr/bin/env bash
-# MrClock SSL deploy hook — runs after issue/renew
-set -euo pipefail
+# MrClock SSL deploy hook — runs after issue/renew (acme.sh --reloadcmd / cron)
+set -uo pipefail
 STATE_DIR="${SECUREBOX_SSL_STATE_DIR:-/var/lib/securebox/ssl}"
 CONFIG="${STATE_DIR}/config.env"
 if [[ ! -f "$CONFIG" ]]; then
   echo "[ssl-deploy] missing config: $CONFIG" >&2
   exit 1
 fi
-# shellcheck disable=SC1090
-source "$CONFIG"
+
+# Parse KEY=VALUE (never source: values must not be executed)
+SSL_ROLE="" SSL_PRIMARY="" SSL_DOMAINS="" SSL_PANEL_CERT_DIR="" SSL_NODE_CERT_DIR=""
+SSL_HAPROXY_CERT_DIR="" SSL_ACME_HOME=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ "$line" =~ ^(SSL_ROLE|SSL_PRIMARY|SSL_DOMAINS|SSL_PANEL_CERT_DIR|SSL_NODE_CERT_DIR|SSL_HAPROXY_CERT_DIR|SSL_ACME_HOME)=(.*)$ ]] || continue
+  key="${BASH_REMATCH[1]}"
+  val="${BASH_REMATCH[2]}"
+  if [[ "$val" =~ ^\"(.*)\"$ ]] || [[ "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
+  printf -v "$key" '%s' "$val"
+done <"$CONFIG"
 
 PANEL_DIR="${SSL_PANEL_CERT_DIR:-/var/lib/pasarguard/certs}"
 NODE_DIR="${SSL_NODE_CERT_DIR:-/var/lib/pg-node/certs}"
+HAPROXY_DIR="${SSL_HAPROXY_CERT_DIR:-/etc/haproxy/certs}"
 PRIMARY="${SSL_PRIMARY:-}"
 ROLE="${SSL_ROLE:-panel}"
-DOMAINS="${SSL_DOMAINS:-$PRIMARY}"
 LIVE_DIR="${STATE_DIR}/live"
+FAIL=0
 
 if [[ -z "$PRIMARY" ]]; then
   echo "[ssl-deploy] SSL_PRIMARY empty" >&2
   exit 1
 fi
+read -r -a DOMAINS <<<"${SSL_DOMAINS:-$PRIMARY}"
+for d in "${DOMAINS[@]}"; do
+  if ! [[ "$d" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+    echo "[ssl-deploy] refusing invalid domain in config: $d" >&2
+    exit 1
+  fi
+done
 
 SRC_CERT="${LIVE_DIR}/fullchain.cer"
 SRC_KEY="${LIVE_DIR}/key.pem"
-
 # Prefer paths exported by acme.sh --reloadcmd
-if [[ -n "${CERT_FULLCHAIN_PATH:-}" && -f "${CERT_FULLCHAIN_PATH}" ]]; then
+if [[ -n "${CERT_FULLCHAIN_PATH:-}" && -s "${CERT_FULLCHAIN_PATH}" ]]; then
   SRC_CERT="$CERT_FULLCHAIN_PATH"
 fi
-if [[ -n "${CERT_KEY_PATH:-}" && -f "${CERT_KEY_PATH}" ]]; then
+if [[ -n "${CERT_KEY_PATH:-}" && -s "${CERT_KEY_PATH}" ]]; then
   SRC_KEY="$CERT_KEY_PATH"
 fi
-
-if [[ ! -f "$SRC_CERT" || ! -f "$SRC_KEY" ]]; then
-  # Fallback: panel copies, then acme.sh home
-  if [[ -f "${PANEL_DIR}/${PRIMARY}.cer" && -f "${PANEL_DIR}/${PRIMARY}.cer.key" ]]; then
-    SRC_CERT="${PANEL_DIR}/${PRIMARY}.cer"
-    SRC_KEY="${PANEL_DIR}/${PRIMARY}.cer.key"
-  else
-    ACME_HOME="${SSL_ACME_HOME:-/root/.acme.sh}"
-    for cand in \
-      "${ACME_HOME}/${PRIMARY}_ecc/fullchain.cer" \
-      "${ACME_HOME}/${PRIMARY}/fullchain.cer"; do
-      if [[ -f "$cand" ]]; then
-        SRC_CERT="$cand"
-        break
-      fi
-    done
-    for cand in \
-      "${ACME_HOME}/${PRIMARY}_ecc/${PRIMARY}.key" \
-      "${ACME_HOME}/${PRIMARY}/${PRIMARY}.key"; do
-      if [[ -f "$cand" ]]; then
-        SRC_KEY="$cand"
-        break
-      fi
-    done
-  fi
+if [[ ! -s "$SRC_CERT" || ! -s "$SRC_KEY" ]]; then
+  ACME_HOME="${SSL_ACME_HOME:-/root/.acme.sh}"
+  for dir in "${ACME_HOME}/${PRIMARY}_ecc" "${ACME_HOME}/${PRIMARY}"; do
+    if [[ -s "${dir}/fullchain.cer" && -s "${dir}/${PRIMARY}.key" ]]; then
+      SRC_CERT="${dir}/fullchain.cer"
+      SRC_KEY="${dir}/${PRIMARY}.key"
+      break
+    fi
+  done
 fi
-
-if [[ ! -f "$SRC_CERT" || ! -f "$SRC_KEY" ]]; then
+if [[ ! -s "$SRC_CERT" || ! -s "$SRC_KEY" ]]; then
   echo "[ssl-deploy] cert/key not found for ${PRIMARY}" >&2
   exit 1
 fi
 
 # Keep a stable live copy for future renews
 mkdir -p "$LIVE_DIR"
-if [[ "$SRC_CERT" != "${LIVE_DIR}/fullchain.cer" ]]; then
-  cp -f "$SRC_CERT" "${LIVE_DIR}/fullchain.cer"
-fi
-if [[ "$SRC_KEY" != "${LIVE_DIR}/key.pem" ]]; then
-  cp -f "$SRC_KEY" "${LIVE_DIR}/key.pem"
-fi
+[[ "$SRC_CERT" -ef "${LIVE_DIR}/fullchain.cer" ]] || cp -f "$SRC_CERT" "${LIVE_DIR}/fullchain.cer" || exit 1
+[[ "$SRC_KEY" -ef "${LIVE_DIR}/key.pem" ]] || cp -f "$SRC_KEY" "${LIVE_DIR}/key.pem" || exit 1
 chmod 600 "${LIVE_DIR}/key.pem"
 SRC_CERT="${LIVE_DIR}/fullchain.cer"
 SRC_KEY="${LIVE_DIR}/key.pem"
 
+# Same cert as last successful deploy? Then copy files but skip restarts
+# (acme.sh renew runs this hook, and "Renew now" runs it again).
+FP_FILE="${STATE_DIR}/last_deploy.sha256"
+FP="$(cat "$SRC_CERT" "$SRC_KEY" | sha256sum | awk '{print $1}')"
+CHANGED=1
+if [[ "${SSL_DEPLOY_FORCE_RELOAD:-0}" != "1" && -f "$FP_FILE" && "$(cat "$FP_FILE")" == "$FP" ]]; then
+  CHANGED=0
+fi
+
+install_file() {
+  # install_file SRC DEST MODE
+  local tmp
+  tmp="$(mktemp "$(dirname "$2")/.deploy.XXXXXX")" || return 1
+  cat "$1" >"$tmp" && chmod "$3" "$tmp" && mv -f "$tmp" "$2"
+}
+
 deploy_panel() {
-  mkdir -p "$PANEL_DIR"
+  mkdir -p "$PANEL_DIR" || { FAIL=1; return; }
   local d
-  for d in $DOMAINS; do
-    cp -f "$SRC_CERT" "${PANEL_DIR}/${d}.cer"
-    cp -f "$SRC_KEY" "${PANEL_DIR}/${d}.cer.key"
-    chmod 644 "${PANEL_DIR}/${d}.cer"
-    chmod 600 "${PANEL_DIR}/${d}.cer.key"
+  for d in "${DOMAINS[@]}"; do
+    install_file "$SRC_CERT" "${PANEL_DIR}/${d}.cer" 644 || FAIL=1
+    install_file "$SRC_KEY" "${PANEL_DIR}/${d}.cer.key" 600 || FAIL=1
   done
-  # Combined PEM for HAProxy (ToolBox Reverse Proxy reads /etc/haproxy/certs/)
-  mkdir -p /etc/haproxy/certs 2>/dev/null || true
-  if [[ -d /etc/haproxy/certs ]]; then
-    local d
-    for d in $DOMAINS; do
-      cat "$SRC_CERT" "$SRC_KEY" >"/etc/haproxy/certs/${d}.pem"
-      chmod 600 "/etc/haproxy/certs/${d}.pem"
-    done
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet haproxy 2>/dev/null; then
-      systemctl reload haproxy >/dev/null 2>&1 || true
+}
+
+deploy_haproxy() {
+  # Only when HAProxy is installed (do not create /etc/haproxy on hosts without it)
+  [[ -d "$(dirname "$HAPROXY_DIR")" ]] || return 0
+  mkdir -p "$HAPROXY_DIR" || { FAIL=1; return; }
+  local d pem
+  for d in "${DOMAINS[@]}"; do
+    pem="$(mktemp "${HAPROXY_DIR}/.pem.XXXXXX")" || { FAIL=1; continue; }
+    chmod 600 "$pem"
+    cat "$SRC_CERT" "$SRC_KEY" >"$pem" && mv -f "$pem" "${HAPROXY_DIR}/${d}.pem" || FAIL=1
+  done
+  if (( CHANGED )) && command -v systemctl >/dev/null 2>&1 \
+      && systemctl is-active --quiet haproxy 2>/dev/null; then
+    if ! systemctl reload haproxy >/dev/null 2>&1; then
+      echo "[ssl-deploy] haproxy reload FAILED — check: journalctl -u haproxy -n 40" >&2
+      FAIL=1
     fi
   fi
 }
 
 deploy_node() {
-  mkdir -p "$NODE_DIR"
-  cp -f "$SRC_CERT" "${NODE_DIR}/ssl_cert.pem"
-  cp -f "$SRC_KEY" "${NODE_DIR}/ssl_key.pem"
-  chmod 644 "${NODE_DIR}/ssl_cert.pem"
-  chmod 600 "${NODE_DIR}/ssl_key.pem"
+  mkdir -p "$NODE_DIR" || { FAIL=1; return; }
+  install_file "$SRC_CERT" "${NODE_DIR}/ssl_cert.pem" 644 || FAIL=1
+  install_file "$SRC_KEY" "${NODE_DIR}/ssl_key.pem" 600 || FAIL=1
 }
 
-case "$ROLE" in
-  panel) deploy_panel ;;
-  node) deploy_node ;;
-  both) deploy_panel; deploy_node ;;
-  *) deploy_panel ;;
-esac
-
-# Soft-reload PasarGuard containers when compose is present
 reload_compose() {
   local dir="$1"
+  (( CHANGED )) || return 0
   [[ -d "$dir" ]] || return 0
   [[ -f "${dir}/docker-compose.yml" || -f "${dir}/compose.yml" ]] || return 0
-  if command -v docker >/dev/null 2>&1; then
-    (cd "$dir" && docker compose restart >/dev/null 2>&1) \
-      || (cd "$dir" && docker-compose restart >/dev/null 2>&1) \
-      || true
+  command -v docker >/dev/null 2>&1 || return 0
+  if ! (cd "$dir" && docker compose restart >/dev/null 2>&1) \
+      && ! (cd "$dir" && docker-compose restart >/dev/null 2>&1); then
+    echo "[ssl-deploy] restart FAILED in ${dir}" >&2
+    FAIL=1
   fi
 }
 
 case "$ROLE" in
-  panel|both) reload_compose /opt/pasarguard ;;
+  node) deploy_node ;;
+  both) deploy_panel; deploy_haproxy; deploy_node ;;
+  *) deploy_panel; deploy_haproxy ;;
 esac
 case "$ROLE" in
-  node|both) reload_compose /opt/pg-node ;;
+  node) reload_compose /opt/pg-node ;;
+  both) reload_compose /opt/pasarguard; reload_compose /opt/pg-node ;;
+  *) reload_compose /opt/pasarguard ;;
 esac
 
+if (( FAIL )); then
+  echo "[ssl-deploy] FAILED role=${ROLE} primary=${PRIMARY}" >&2
+  exit 1
+fi
+printf '%s\n' "$FP" >"$FP_FILE"
 date -u +%Y-%m-%dT%H:%M:%SZ >"${STATE_DIR}/last_deploy.txt"
-echo "[ssl-deploy] OK role=${ROLE} primary=${PRIMARY}"
+echo "[ssl-deploy] OK role=${ROLE} primary=${PRIMARY} changed=${CHANGED}"
 HOOK
   chmod 700 "$SSL_DEPLOY_HOOK"
 }
@@ -444,33 +514,50 @@ set -euo pipefail
 STATE_DIR="${SECUREBOX_SSL_STATE_DIR:-/var/lib/securebox/ssl}"
 STOPPED="${STATE_DIR}/.acme-stopped-services"
 [[ -f "$STOPPED" ]] || exit 0
+FAILED="${STATE_DIR}/acme-post-hook.failed"
+failed=()
 while IFS= read -r svc || [[ -n "$svc" ]]; do
   [[ -n "$svc" ]] || continue
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl start "$svc" >/dev/null 2>&1 || true
+  command -v systemctl >/dev/null 2>&1 || continue
+  ok=0
+  for _ in 1 2 3; do
+    if systemctl start "$svc" >/dev/null 2>&1 && systemctl is-active --quiet "$svc"; then
+      ok=1
+      break
+    fi
+    sleep 2
+  done
+  if (( ok )); then
     echo "[acme-post] started ${svc}" >&2
+  else
+    echo "[acme-post] FAILED to start ${svc} — journalctl -u ${svc} -n 40" >&2
+    failed+=("$svc")
   fi
 done <"$STOPPED"
 rm -f "$STOPPED"
+if ((${#failed[@]} > 0)); then
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${failed[*]}" >"$FAILED"
+  logger -t mrclock-acme "post-hook could not start: ${failed[*]}" 2>/dev/null || true
+  exit 1
+fi
+rm -f "$FAILED"
 HOOK
   chmod 700 "$SSL_PRE_HOOK" "$SSL_POST_HOOK"
 }
 
 _ssl_panel_behind_haproxy() {
-  # True when ToolBox HAProxy panel mode is configured (TLS terminated at proxy).
-  local engine="" mode=""
-  if [[ -f "$PROXY_CONFIG_FILE" ]]; then
-    engine="$(grep -E '^PROXY_ENGINE=' "$PROXY_CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    mode="$(grep -E '^PROXY_MODE=' "$PROXY_CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    if [[ "$engine" == "haproxy" && "$mode" == "panel" ]]; then
-      return 0
-    fi
+  # True only when HAProxy panel mode is set up by ToolBox: saved proxy config,
+  # or the ToolBox-managed panel haproxy.cfg is active. (PasarGuard's stock
+  # .env already has commented UVICORN_SSL_* lines, so .env is no signal.)
+  local PROXY_ENGINE="" PROXY_MODE=""
+  kv_load_file "$PROXY_CONFIG_FILE" PROXY_ENGINE PROXY_MODE
+  if [[ "$PROXY_ENGINE" == "haproxy" && "$PROXY_MODE" == "panel" ]]; then
+    return 0
   fi
-  if have_cmd systemctl && systemctl is-active --quiet haproxy 2>/dev/null; then
-    if [[ -f /opt/pasarguard/.env ]] \
-        && grep -qE '^[[:space:]]*#.*UVICORN_SSL_CERTFILE' /opt/pasarguard/.env 2>/dev/null; then
-      return 0
-    fi
+  local cfg="${PROXY_HAPROXY_CFG:-/etc/haproxy/haproxy.cfg}"
+  if have_cmd systemctl && systemctl is-active --quiet haproxy 2>/dev/null \
+      && grep -q '^# MrClock ToolBox — PasarGuard panel single-port' "$cfg" 2>/dev/null; then
+    return 0
   fi
   return 1
 }
@@ -499,26 +586,27 @@ _ssl_register_acme_port_hooks() {
   (( found == 1 ))
 }
 
+_ssl_valid_email() {
+  [[ -z "${1-}" || "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
+}
+
 _ssl_save_config() {
   local role="$1"
   local primary="$2"
   shift 2
-  local domains=("$@")
-  local joined
-  joined="$(printf '%s ' "${domains[@]}")"
-  joined="$(trim "$joined")"
+  local -a domains=("$@")
   _ssl_ensure_dirs "$role"
-  cat >"$SSL_CONFIG_FILE" <<EOF
-# Generated by MrClock ToolBox — do not edit by hand unless you know why
-SSL_ROLE=${role}
-SSL_PRIMARY=${primary}
-SSL_DOMAINS="${joined}"
-SSL_PANEL_CERT_DIR=${SSL_PANEL_CERT_DIR}
-SSL_NODE_CERT_DIR=${SSL_NODE_CERT_DIR}
-SSL_ACME_HOME=${SSL_ACME_HOME}
-SSL_EMAIL=${SSL_EMAIL:-}
-EOF
-  chmod 600 "$SSL_CONFIG_FILE"
+  local SSL_ROLE="$role" SSL_PRIMARY="$primary" SSL_DOMAINS="${domains[*]}"
+  local k tmp
+  tmp="$(mktemp "${SSL_STATE_DIR}/.config.XXXXXX")"
+  {
+    printf '# Generated by MrClock ToolBox (parsed, never sourced)\n'
+    for k in "${SSL_CONFIG_KEYS[@]}"; do
+      kv_line "$k" "${!k-}"
+    done
+  } >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$SSL_CONFIG_FILE"
   _ssl_write_deploy_hook
   _ssl_write_acme_port_hooks
 }
@@ -528,9 +616,25 @@ _ssl_load_config() {
   SSL_PRIMARY=""
   SSL_DOMAINS=""
   SSL_EMAIL=""
-  if [[ -f "$SSL_CONFIG_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$SSL_CONFIG_FILE"
+  SSL_KEY_TYPE=""
+  # Paths keep their module defaults unless the file overrides them
+  kv_load_file "$SSL_CONFIG_FILE" "${SSL_CONFIG_KEYS[@]}"
+  SSL_PANEL_CERT_DIR="${SSL_PANEL_CERT_DIR:-${SSL_PANEL_ROOT}/certs}"
+  SSL_NODE_CERT_DIR="${SSL_NODE_CERT_DIR:-${SSL_NODE_ROOT}/certs}"
+  SSL_HAPROXY_CERT_DIR="${SSL_HAPROXY_CERT_DIR:-/etc/haproxy/certs}"
+  SSL_ACME_HOME="${SSL_ACME_HOME:-/root/.acme.sh}"
+  SSL_ACME_BIN="${SSL_ACME_HOME}/acme.sh"
+}
+
+_ssl_ecc_args() {
+  # Prints "--ecc" when the primary cert is ECC (saved type, else acme.sh dirs)
+  local primary="$1"
+  case "${SSL_KEY_TYPE:-}" in
+    ecc) printf -- '--ecc\n'; return 0 ;;
+    rsa) return 0 ;;
+  esac
+  if [[ -f "${SSL_ACME_HOME}/${primary}_ecc/${primary}.conf" ]]; then
+    printf -- '--ecc\n'
   fi
 }
 
@@ -557,14 +661,17 @@ _ssl_issue_cert() {
   fi
 
   _ssl_write_acme_port_hooks
+  rm -f "$SSL_POST_HOOK_FAILED"
   ui_info "Requesting certificate for: ${domains[*]}"
   # pre/post hooks free :80 (HAProxy/etc) so HTTP-01 works now and on cron renew
-  if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+  if SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
       "$SSL_ACME_BIN" --issue --force --standalone "${d_args[@]}" \
       --keylength ec-256 \
       --pre-hook "$SSL_PRE_HOOK" \
       --post-hook "$SSL_POST_HOOK" \
       --reloadcmd "$SSL_DEPLOY_HOOK"; then
+    SSL_KEY_TYPE=ecc
+  else
     # Retry RSA if ECC fails on older stacks
     ui_warn "ECC issue failed — retrying with RSA 2048"
     if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
@@ -574,24 +681,25 @@ _ssl_issue_cert() {
         --post-hook "$SSL_POST_HOOK" \
         --reloadcmd "$SSL_DEPLOY_HOOK"; then
       ui_error "Certificate issuance failed. Check DNS A/AAAA records point here and port 80 is free."
+      _ssl_report_post_hook || true
       return 1
     fi
+    SSL_KEY_TYPE=rsa
   fi
+  # Persist key type so install-cert / renew / repair target the right cert
+  _ssl_save_config "$role" "$primary" "${domains[@]}"
+  _ssl_report_post_hook || true
 
   ui_info "Installing certificate files + enabling auto-renew reload hook"
-  if ! "$SSL_ACME_BIN" --install-cert -d "$primary" \
-      --ecc \
+  local -a ecc=()
+  mapfile -t ecc < <(_ssl_ecc_args "$primary")
+  if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+      "$SSL_ACME_BIN" --install-cert -d "$primary" "${ecc[@]}" \
       --fullchain-file "$fullchain" \
       --key-file "$keyfile" \
-      --reloadcmd "$SSL_DEPLOY_HOOK" 2>/dev/null; then
-    # Non-ECC fallback
-    if ! "$SSL_ACME_BIN" --install-cert -d "$primary" \
-        --fullchain-file "$fullchain" \
-        --key-file "$keyfile" \
-        --reloadcmd "$SSL_DEPLOY_HOOK"; then
-      ui_error "acme.sh --install-cert failed"
-      return 1
-    fi
+      --reloadcmd "$SSL_DEPLOY_HOOK"; then
+    ui_error "acme.sh --install-cert failed"
+    return 1
   fi
 
   # Run deploy once now (covers node copy + multi-domain aliases)
@@ -606,6 +714,14 @@ _ssl_issue_cert() {
   fi
   _ssl_register_acme_port_hooks "$primary" || true
   return 0
+}
+
+_ssl_report_post_hook() {
+  # Returns 1 (and explains) if the ACME post-hook could not restart a proxy
+  [[ -f "$SSL_POST_HOOK_FAILED" ]] || return 0
+  ui_error "ACME post-hook could not restart: $(cut -d' ' -f2- "$SSL_POST_HOOK_FAILED")"
+  ui_info "Start it manually: systemctl start <service> ; journalctl -u <service> -n 40"
+  return 1
 }
 
 # Upsert KEY in a dotenv-style file. style=spaced → KEY = "value" (panel);
@@ -900,7 +1016,12 @@ ssl_issue_interactive() {
     fi
   done
 
-  ui_ask email "Email for Let's Encrypt (optional)" "${SSL_EMAIL:-}"
+  while true; do
+    ui_ask email "Email for Let's Encrypt (optional)" "${SSL_EMAIL:-}"
+    email="$(trim "$email")"
+    _ssl_valid_email "$email" && break
+    ui_warn "Invalid email address."
+  done
   SSL_EMAIL="$email"
 
   if ! ui_confirm "Issue certificate for ${SSL_DOMAINS_ARR[*]} → role=${role}?" "Y"; then
@@ -938,6 +1059,7 @@ ssl_status() {
   ui_kv "Role" "$role"
   ui_kv "Primary" "${primary:-(none)}"
   ui_kv "Domains" "${domain_list:-(none)}"
+  ui_kv "Key type" "${SSL_KEY_TYPE:-(unknown)}"
   ui_kv "Config" "$SSL_CONFIG_FILE"
   ui_kv "Deploy hook" "$SSL_DEPLOY_HOOK"
   ui_kv "acme.sh" "$([[ -x $SSL_ACME_BIN ]] && echo OK || echo missing)"
@@ -952,8 +1074,9 @@ ssl_status() {
   if [[ -n "$primary" ]]; then
     case "$role" in
       panel|both)
-        # shellcheck disable=SC2086
-        for f in ${domain_list:-$primary}; do
+        local -a status_doms=()
+        read -r -a status_doms <<<"${domain_list:-$primary}"
+        for f in "${status_doms[@]}"; do
           if [[ -f "${SSL_PANEL_CERT_DIR}/${f}.cer" ]]; then
             ui_success "Panel cert OK: ${SSL_PANEL_CERT_DIR}/${f}.cer"
             if have_cmd openssl; then
@@ -983,6 +1106,8 @@ ssl_status() {
     ui_warn "No SSL setup saved yet. Use Issue / Setup first."
   fi
 
+  _ssl_report_post_hook || true
+
   # Cron presence
   if crontab -l 2>/dev/null | grep -q 'acme.sh'; then
     ui_success "Auto-renew cron: present"
@@ -1008,27 +1133,37 @@ ssl_renew_now() {
   fi
   _ssl_write_deploy_hook
   _ssl_write_acme_port_hooks
-  ui_info "Forcing renew for ${SSL_PRIMARY}..."
+  rm -f "$SSL_POST_HOOK_FAILED"
+  local -a ecc=()
+  mapfile -t ecc < <(_ssl_ecc_args "$SSL_PRIMARY")
+  ui_info "Forcing renew for ${SSL_PRIMARY} (${ecc[*]:-rsa})..."
   # Pass pre/post hooks so HAProxy (or peers) release :80 for HTTP-01
-  if SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
-       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force --ecc \
-       --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK" 2>/dev/null \
-     || SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
-       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force \
+  if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+       "$SSL_ACME_BIN" --renew -d "$SSL_PRIMARY" --force "${ecc[@]}" \
        --pre-hook "$SSL_PRE_HOOK" --post-hook "$SSL_POST_HOOK"; then
-    SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" bash "$SSL_DEPLOY_HOOK" || true
-    ui_success "Renew + deploy completed"
-    local -a doms=()
-    # shellcheck disable=SC2206
-    doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
-    # Do NOT rewrite .env here — paths are unchanged; rewriting UVICORN_SSL_*
-    # would undo HAProxy local-HTTP prep. Deploy hook already refreshed files/PEMs.
-    _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
-    return 0
+    ui_error "Renew failed — check DNS, port 80, and logs under ${SSL_ACME_HOME}"
+    _ssl_report_post_hook || true
+    ui_info "Tip: SSL → Repair auto-renew, then retry Renew now"
+    return 1
   fi
-  ui_error "Renew failed — check DNS, port 80, and logs under ${SSL_ACME_HOME}"
-  ui_info "Tip: SSL → Repair auto-renew, then retry Renew now"
-  return 1
+  local rc=0
+  _ssl_report_post_hook || rc=1
+  # acme.sh already ran the deploy hook; run it again to get its exit status
+  # (it skips restarts when the cert did not change since that run).
+  if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" bash "$SSL_DEPLOY_HOOK"; then
+    ui_error "Certificate renewed, but deploy failed (see messages above)"
+    rc=1
+  fi
+  if (( rc != 0 )); then
+    return 1
+  fi
+  ui_success "Renew + deploy completed"
+  local -a doms=()
+  read -r -a doms <<<"${SSL_DOMAINS:-$SSL_PRIMARY}"
+  # Do NOT rewrite .env here — paths are unchanged; rewriting UVICORN_SSL_*
+  # would undo HAProxy local-HTTP prep. Deploy hook already refreshed files/PEMs.
+  _ssl_print_env_guide "${SSL_ROLE:-panel}" "$SSL_PRIMARY" "${doms[@]}"
+  return 0
 }
 
 ssl_show_env_guide() {
@@ -1039,8 +1174,7 @@ ssl_show_env_guide() {
     return 0
   fi
   local -a doms=()
-  # shellcheck disable=SC2206
-  doms=(${SSL_DOMAINS:-$SSL_PRIMARY})
+  read -r -a doms <<<"${SSL_DOMAINS:-$SSL_PRIMARY}"
   if _ssl_panel_behind_haproxy; then
     ui_info "HAProxy panel mode detected — re-apply keeps UVICORN_SSL_* commented."
   fi
@@ -1073,12 +1207,13 @@ ssl_repair_autorenew() {
   local keyfile="${SSL_STATE_DIR}/live/key.pem"
   mkdir -p "${SSL_STATE_DIR}/live"
   if [[ -f "$fullchain" && -f "$keyfile" ]]; then
-    if ! "$SSL_ACME_BIN" --install-cert -d "$SSL_PRIMARY" --ecc \
+    local -a ecc=()
+    mapfile -t ecc < <(_ssl_ecc_args "$SSL_PRIMARY")
+    if ! SECUREBOX_SSL_STATE_DIR="$SSL_STATE_DIR" \
+        "$SSL_ACME_BIN" --install-cert -d "$SSL_PRIMARY" "${ecc[@]}" \
         --fullchain-file "$fullchain" --key-file "$keyfile" \
-        --reloadcmd "$SSL_DEPLOY_HOOK" 2>/dev/null; then
-      "$SSL_ACME_BIN" --install-cert -d "$SSL_PRIMARY" \
-        --fullchain-file "$fullchain" --key-file "$keyfile" \
-        --reloadcmd "$SSL_DEPLOY_HOOK" || true
+        --reloadcmd "$SSL_DEPLOY_HOOK"; then
+      ui_warn "acme.sh --install-cert failed — auto-renew reload hook may be stale"
     fi
   fi
   if _ssl_register_acme_port_hooks "$SSL_PRIMARY"; then

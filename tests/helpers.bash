@@ -30,3 +30,15 @@ ui_kv() { :; }
 ui_box_start() { :; }
 ui_box_end() { :; }
 log() { :; }
+
+# make_cert DIR DOMAIN... → self-signed DIR/fullchain.cer + DIR/key.pem (SAN = domains)
+make_cert() {
+  local dir="$1"
+  shift
+  local san="" d
+  for d in "$@"; do san+="${san:+,}DNS:${d}"; done
+  mkdir -p "$dir"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+    -keyout "${dir}/key.pem" -out "${dir}/fullchain.cer" -days 2 \
+    -subj "/CN=$1" -addext "subjectAltName=${san}" >/dev/null 2>&1
+}

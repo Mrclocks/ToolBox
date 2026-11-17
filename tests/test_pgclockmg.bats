@@ -72,3 +72,27 @@ EOF
   grep -q 'Redirect server' "${REPO_ROOT}/modules/pgrestore.sh"
   grep -q 'lib/pgclockmg.sh' "${REPO_ROOT}/install.sh"
 }
+
+@test "_pgmg_download_installer prints only the verified path on stdout" {
+  local src="${BATS_TEST_TMPDIR}/install.sh"
+  printf 'echo hi\n' >"$src"
+  PGCLOCKMG_INSTALL_URL="file://${src}"
+  PGCLOCKMG_INSTALL_SHA256="$(sha256sum "$src" | awk '{print $1}')"
+  # Real (non-silenced) UI so stray stdout output would be caught
+  ui_info() { printf '* %s\n' "$*"; }
+  ui_success() { printf '+ %s\n' "$*"; }
+  local out
+  out="$(_pgmg_download_installer 2>/dev/null)"
+  [ -f "$out" ]
+  [ "$(cat "$out")" = "echo hi" ]
+  rm -f "$out"
+}
+
+@test "_pgmg_download_installer refuses a SHA-256 mismatch" {
+  local src="${BATS_TEST_TMPDIR}/install.sh"
+  printf 'echo evil\n' >"$src"
+  PGCLOCKMG_INSTALL_URL="file://${src}"
+  PGCLOCKMG_INSTALL_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
+  run _pgmg_download_installer
+  [ "$status" -ne 0 ]
+}

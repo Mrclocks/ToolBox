@@ -140,13 +140,15 @@ ui_read() {
     stty sane </dev/tty 2>/dev/null || true
   fi
 
-  if [[ -e /dev/tty ]] && { exec 3<>/dev/tty; } 2>/dev/null; then
+  local __fd=""
+  # Dynamic fd: never clobber a descriptor the caller may be using (e.g. 3)
+  if [[ -e /dev/tty ]] && { exec {__fd}<>/dev/tty; } 2>/dev/null; then
     # -e: readline editing; -r: raw backslashes; strip CR afterwards
-    if ! IFS= read -r -e -u 3 __line 2>/dev/null; then
+    if ! IFS= read -r -e -u "$__fd" __line 2>/dev/null; then
       # Fallback without -e (busybox / restricted bash)
-      IFS= read -r -u 3 __line || __line=""
+      IFS= read -r -u "$__fd" __line || __line=""
     fi
-    exec 3<&- 3>&- 2>/dev/null || true
+    exec {__fd}>&- 2>/dev/null || true
   elif [[ -t 0 ]]; then
     if ! IFS= read -r -e __line 2>/dev/null; then
       IFS= read -r __line || __line=""

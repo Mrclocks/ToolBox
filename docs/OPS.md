@@ -28,8 +28,19 @@ Menu:
 4. Show `.env` / path instructions
 5. Repair auto-renew — reinstall cron + deploy hook
 
-Preflight checks DNS (soft) and port **80**. If HAProxy/nginx/caddy hold `:80`,
-ACME **pre/post hooks** stop them briefly for HTTP-01 (including cron renew), then restore.
+Preflight checks DNS (soft: all A/AAAA answers vs. every local address; behind
+NAT it says "cannot verify" instead of warning) and port **80**. If
+HAProxy/nginx/caddy hold `:80`, ACME **pre/post hooks** stop them briefly for
+HTTP-01 (including cron renew), then restore. If the post-hook cannot restart a
+service it retries, logs to syslog (`mrclock-acme`), and leaves
+`/var/lib/securebox/ssl/acme-post-hook.failed`; Status / Renew report it.
+
+The deploy hook exits non-zero on any failed copy, HAProxy reload or compose
+restart, so **Renew now** only reports success when deploy really succeeded.
+Restarts are skipped when the certificate did not change since the last deploy.
+
+State files (`ssl/config.env`, `proxy/config.env`) are plain `KEY=value` and are
+**parsed, never sourced** — nothing in them is executed.
 
 After **Issue / Setup**, ToolBox **automatically** writes paths into:
 
@@ -50,8 +61,15 @@ local HTTP when HAProxy panel mode is detected).
 
 HAProxy only — aligned with [PasarGuard single-port](https://docs.pasarguard.org/en/learn/single-port/):
 
-- **Panel mode** — `listen front`, mode http, Host ACL, deny default,
-  PEM dir `/etc/haproxy/certs/`, binds 443(+extras) SSL + 80 plain (+ optional 9000 plain).
+- **Panel mode** — `listen front`, mode http, Host ACL (`hdr(host),field(1,:)`
+  so `Host: domain:8443` still matches), deny default, PEM dir
+  `/etc/haproxy/certs/`, binds 443 SSL + 80 plain, plus optional extra SSL /
+  plain ports (none by default). Binds are dual-stack when the kernel has IPv6,
+  IPv4-only otherwise.
+  Every domain (panel + subscription) must have a certificate that really
+  covers it (checked with `openssl x509 -checkhost` and key match) or setup stops.
+  The config is validated with `haproxy -c` before it is saved; a bad write is
+  rolled back to the previous file.
   No forced HTTP→HTTPS redirect (docs keep :80 working).
   After setup, panel `.env` is switched to local HTTP (`UVICORN_HOST`/`PORT`, SSL keys commented).
 - **Node mode** — `listen front_node`, TCP/SNI, REALITY `send-proxy`, fallback backend

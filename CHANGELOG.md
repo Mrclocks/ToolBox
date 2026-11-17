@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.3.9 — 2026-11-17
+
+### Fixed
+- **PGClockMG / PGClockBackup install & uninstall always failed**: the installer
+  path was captured together with UI messages; messages now go to stderr
+- **HAProxy Host ACL** ignores `:port` — panel no longer returns 403 on extra
+  HTTPS ports (8443…) or non-default listen ports
+- **HAProxy PEMs**: a PEM is only built from a certificate that covers the
+  domain and whose key matches; setup fails if *any* domain lacks one
+- **Renew now** reports failure when the deploy hook fails (no more `|| true`);
+  deploy hook exits non-zero on failed copy / HAProxy reload / compose restart
+  and skips restarts when the certificate is unchanged (no double restart)
+- **ACME post-hook** retries restarting stopped proxies and records failures
+  (`acme-post-hook.failed`, syslog); Issue / Renew / Status surface it
+- **"Behind HAProxy" detection** no longer trusts commented `UVICORN_SSL_*`
+  lines (present in stock PasarGuard `.env`); uses ToolBox proxy config or the
+  ToolBox-managed `haproxy.cfg`
+- **ECC/RSA**: key type is saved; install-cert / renew / repair target the
+  certificate that was actually issued (no stale ECC fallback, no hidden errors)
+- **DNS preflight**: checks all A/AAAA answers against all local addresses and
+  reports "cannot verify" behind NAT instead of a false warning
+- HAProxy binds fall back to IPv4 when the kernel has no IPv6 (HAProxy used to
+  refuse to start); extra plain ports are dual-stack like the others
+- HAProxy config is validated before saving `config.env`; an invalid first-time
+  config is moved aside instead of being left in place
+- Extra HTTPS / plain ports default to none (were 8443 / 9000) and are validated
+
+### Security
+- `ssl/config.env` and `proxy/config.env` are parsed with an allow-list, never
+  `source`d (values with spaces or `$(...)` were executed — including from cron)
+- Let's Encrypt email is validated; deploy hook rejects invalid domains
+- Deploy hook writes HAProxy PEMs only when HAProxy is installed (configurable dir)
+- `ui_read` uses a dynamic fd instead of clobbering fd 3
+
+
 ## 0.3.8 — 2026-10-20
 
 ### Fixed

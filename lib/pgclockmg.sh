@@ -79,34 +79,35 @@ _pgmg_sha256_file() {
 }
 
 _pgmg_download_installer() {
-  # Prints path to downloaded install.sh after integrity check
+  # Prints ONLY the path of the verified install.sh on stdout (callers capture
+  # it with $(...)); every message goes to stderr.
   local dest got
-  dest="$(mktemp /tmp/pgclockmg-install.XXXXXX.sh)"
-  ui_info "Downloading PGClockMG installer (${PGCLOCKMG_INSTALL_REF})..."
+  dest="$(mktemp "${TMPDIR:-/tmp}/pgclockmg-install.XXXXXX")" || return 1
+  ui_info "Downloading PGClockMG installer (${PGCLOCKMG_INSTALL_REF})..." >&2
   if ! curl -fsSL --connect-timeout 20 --retry 2 "$PGCLOCKMG_INSTALL_URL" -o "$dest"; then
     rm -f "$dest"
-    ui_error "Failed to download PGClockMG installer"
-    ui_info "URL: ${PGCLOCKMG_INSTALL_URL}"
+    ui_error "Failed to download PGClockMG installer" >&2
+    ui_info "URL: ${PGCLOCKMG_INSTALL_URL}" >&2
     return 1
   fi
   if [[ -n "${PGCLOCKMG_INSTALL_SHA256:-}" ]]; then
     got="$(_pgmg_sha256_file "$dest" || true)"
     if [[ -z "$got" ]]; then
       rm -f "$dest"
-      ui_error "Cannot verify installer — sha256sum/shasum missing"
+      ui_error "Cannot verify installer — sha256sum/shasum missing" >&2
       return 1
     fi
     if [[ "${got,,}" != "${PGCLOCKMG_INSTALL_SHA256,,}" ]]; then
       rm -f "$dest"
-      ui_error "PGClockMG installer SHA-256 mismatch — refusing to run"
-      ui_kv "Expected" "$PGCLOCKMG_INSTALL_SHA256"
-      ui_kv "Got" "$got"
-      ui_info "Update PGCLOCKMG_INSTALL_REF / PGCLOCKMG_INSTALL_SHA256 together when upgrading."
+      ui_error "PGClockMG installer SHA-256 mismatch — refusing to run" >&2
+      ui_kv "Expected" "$PGCLOCKMG_INSTALL_SHA256" >&2
+      ui_kv "Got" "$got" >&2
+      ui_info "Update PGCLOCKMG_INSTALL_REF / PGCLOCKMG_INSTALL_SHA256 together when upgrading." >&2
       return 1
     fi
-    ui_success "Installer integrity OK (SHA-256 matched ${PGCLOCKMG_INSTALL_REF})"
+    ui_success "Installer integrity OK (SHA-256 matched ${PGCLOCKMG_INSTALL_REF})" >&2
   else
-    ui_warn "PGCLOCKMG_INSTALL_SHA256 unset — running without integrity check"
+    ui_warn "PGCLOCKMG_INSTALL_SHA256 unset — running without integrity check" >&2
   fi
   chmod 700 "$dest"
   printf '%s\n' "$dest"
@@ -134,6 +135,10 @@ _pgmg_run_installer() {
   fi
 
   script="$(_pgmg_download_installer)" || return 1
+  if [[ ! -f "$script" ]]; then
+    ui_error "Installer download returned an unexpected path"
+    return 1
+  fi
   ui_info "Running PGClockMG: ${action}..."
 
   # Avoid nested curl|bash re-exec surprises: run local file with env action
