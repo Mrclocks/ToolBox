@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.0.0 — 2026-11-17
+
+First stable release of **PGClockTB** (formerly MrClock ToolBox).
+
+Highlights since 0.3.x: rename + automatic migration (0.4) · safety core:
+run lock, admin-IP guard, verify-or-revert (0.5) · menus by category, 🟢/🟡
+levels, 🔴 Security menu (0.6) · SSL v2: node-certificate safety, verified
+`.env`, DNS-01, reuse (0.7) · HAProxy v2: auto-detect, verified apply with
+rollback, ACME without downtime (0.8) · Doctor + external port check (0.9) ·
+Telegram alerts (0.10).
+
+### Added
+- **Self-update**: `pgclock update [--check]`, Tools → Update — verified
+  download, version + syntax checks, atomic install, smoke test with automatic
+  rollback, `pgclock update rollback`; `pgclock --version`
+- **Pinned release key**: `scripts/pin-release-key.sh` embeds the public key;
+  signatures are checked only against it in a throwaway GnuPG home;
+  `PGCTB_REQUIRE_SIGNATURE=1` refuses unsigned releases
+
+### Fixed
+- **Running the installed `pgclock` deleted its own `lib/ modules/ data/`**
+  (the tree was copied onto itself); later runs silently re-downloaded from
+  GitHub and broke on servers without GitHub access. Installs are now atomic
+  and never copy a tree onto itself
+- A `.asc` signature was reported "OK" when made by any key in root's keyring
+
+
 ## 0.10.0 — 2026-11-17
 
 ### Added

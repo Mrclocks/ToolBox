@@ -99,50 +99,25 @@ _pgctb_verify_release_assets() {
     return 1
   fi
 
-  local fp="${PGCTB_GPG_FINGERPRINT:-}"
+  # Signature: ONLY against the pinned release key (embedded below or an
+  # explicit override). Any other key in root's keyring proves nothing.
+  local fp
+  fp="$(_pgctb_release_fpr)"
   if [[ -n "$fp" ]]; then
     if [[ ! -f "$sig" ]]; then
-      echo "[PGClockTB] ERROR: PGCTB_GPG_FINGERPRINT set but SHA256SUMS.asc missing." >&2
+      echo "[PGClockTB] ERROR: release key is pinned but SHA256SUMS.asc is missing." >&2
       return 1
     fi
-    if ! command -v gpg >/dev/null 2>&1; then
-      echo "[PGClockTB] ERROR: gpg required to verify pinned signature." >&2
+    if ! _pgctb_gpg_verify_pinned "$sig" "$sums" "$fp"; then
+      echo "[PGClockTB] ERROR: SHA256SUMS.asc is not a valid signature by ${fp}." >&2
       return 1
     fi
-    if ! gpg --batch --status-fd 1 --verify "$sig" "$sums" 2>/dev/null \
-         | grep -q "VALIDSIG ${fp}\|VALIDSIG .*${fp}"; then
-      # Also accept fingerprint without spaces / short match via --with-colons
-      local status
-      status="$(gpg --batch --status-fd 1 --verify "$sig" "$sums" 2>/dev/null || true)"
-      if ! grep -E "VALIDSIG[ ]+${fp// /}" <<<"$status" >/dev/null; then
-        echo "[PGClockTB] ERROR: SHA256SUMS.asc not signed by pinned fingerprint ${fp}" >&2
-        return 1
-      fi
-    fi
-    echo "[PGClockTB] SHA256SUMS signature OK (pinned fingerprint)" >&2
-  elif [[ -f "$sig" ]]; then
-    if command -v gpg >/dev/null 2>&1; then
-      if gpg --verify "$sig" "$sums" >/dev/null 2>&1; then
-        echo "[PGClockTB] SHA256SUMS signature OK" >&2
-      else
-        echo "[PGClockTB] ERROR: SHA256SUMS.asc signature verification failed." >&2
-        return 1
-      fi
-    else
-      if (( allow_insecure )); then
-        echo "[PGClockTB] WARN: gpg missing — skipping .asc check (PGCTB_ALLOW_INSECURE=1)" >&2
-      else
-        echo "[PGClockTB] ERROR: SHA256SUMS.asc present but gpg is not installed." >&2
-        return 1
-      fi
-    fi
+    echo "[PGClockTB] SHA256SUMS signature OK (pinned key ${fp})" >&2
+  elif [[ "${PGCTB_REQUIRE_SIGNATURE:-0}" == "1" ]]; then
+    echo "[PGClockTB] ERROR: PGCTB_REQUIRE_SIGNATURE=1 but no release key is pinned." >&2
+    return 1
   else
-    if (( allow_insecure )); then
-      echo "[PGClockTB] WARN: SHA256SUMS.asc not published — unsigned checksums accepted (ALLOW_INSECURE)" >&2
-    else
-      echo "[PGClockTB] WARN: SHA256SUMS.asc not published — checksum OK but unsigned." >&2
-      echo "[PGClockTB] Tip: set PGCTB_GPG_FINGERPRINT and publish .asc for signed releases." >&2
-    fi
+    echo "[PGClockTB] NOTE: release signing key not pinned in this build — checksum only." >&2
   fi
 
   local archive_base want got
@@ -167,19 +142,49 @@ _pgctb_verify_release_assets() {
   return 0
 }
 
+# --- release signing key ----------------------------------------------------
+# Maintainer: set the fingerprint and paste the ASCII-armored PUBLIC key (see
+# docs/RELEASE.md). Empty = releases are verified by checksum only.
+PGCTB_RELEASE_FPR=""
+PGCTB_RELEASE_PUBKEY=""
+
+_pgctb_release_fpr() {
+  local fp="${PGCTB_GPG_FINGERPRINT:-$PGCTB_RELEASE_FPR}"
+  fp="${fp// /}"
+  printf '%s\n' "${fp^^}"
+}
+
+_pgctb_gpg_verify_pinned() {
+  # _pgctb_gpg_verify_pinned SIG FILE FPR → 0 only for a good signature whose
+  # signing key or primary key is FPR, checked in a throwaway GnuPG home.
+  local sig="$1" file="$2" fp="$3" home status rc=1
+  command -v gpg >/dev/null 2>&1 || { echo "[PGClockTB] ERROR: gpg is required to verify the release signature." >&2; return 1; }
+  home="$(mktemp -d)"
+  chmod 700 "$home"
+  if [[ -n "${PGCTB_RELEASE_PUBKEY_FILE:-}" && -f "${PGCTB_RELEASE_PUBKEY_FILE}" ]]; then
+    gpg --homedir "$home" --batch --quiet --import "$PGCTB_RELEASE_PUBKEY_FILE" >/dev/null 2>&1
+  elif [[ -n "$PGCTB_RELEASE_PUBKEY" ]]; then
+    printf '%s\n' "$PGCTB_RELEASE_PUBKEY" | gpg --homedir "$home" --batch --quiet --import >/dev/null 2>&1
+  fi
+  status="$(gpg --homedir "$home" --batch --status-fd 1 --verify "$sig" "$file" 2>/dev/null || true)"
+  rm -rf "$home"
+  if grep -q '^\[GNUPG:\] GOODSIG ' <<<"$status" \
+      && grep -E '^\[GNUPG:\] VALIDSIG ' <<<"$status" | tr ' ' '\n' | grep -qx "$fp"; then
+    rc=0
+  fi
+  return "$rc"
+}
+
 _pgctb_install_persistent() {
   local src="$1"
   [[ -n "$src" ]] && _pgctb_have_tree "$src" || return 1
-  mkdir -p "$PGCTB_INSTALL_DIR"
-  # Copy tree (portable; no rsync required)
-  rm -rf "${PGCTB_INSTALL_DIR:?}/lib" "${PGCTB_INSTALL_DIR}/modules" "${PGCTB_INSTALL_DIR}/data" 2>/dev/null || true
-  cp -a "${src}/lib" "${src}/modules" "${src}/data" "$PGCTB_INSTALL_DIR/"
-  cp -a "${src}/install.sh" "$PGCTB_INSTALL_DIR/install.sh"
-  [[ -f "${src}/VERSION" ]] && cp -a "${src}/VERSION" "$PGCTB_INSTALL_DIR/VERSION" || true
-  [[ -f "${src}/LICENSE" ]] && cp -a "${src}/LICENSE" "$PGCTB_INSTALL_DIR/LICENSE" || true
-  [[ -f "${src}/README.md" ]] && cp -a "${src}/README.md" "$PGCTB_INSTALL_DIR/README.md" || true
-  [[ -f "${src}/CHANGELOG.md" ]] && cp -a "${src}/CHANGELOG.md" "$PGCTB_INSTALL_DIR/CHANGELOG.md" || true
-  chmod 755 "$PGCTB_INSTALL_DIR/install.sh"
+  # Running FROM the installed tree (sudo pgclock): never copy a tree onto
+  # itself — that used to delete lib/ modules/ data/ before copying them.
+  if [[ -d "$PGCTB_INSTALL_DIR" ]] && [[ "$src" -ef "$PGCTB_INSTALL_DIR" ]]; then
+    :
+  else
+    _pgctb_atomic_install "$src" || return 1
+  fi
   _pgctb_write_launcher "$PGCTB_BIN_LINK"
   # Legacy command keeps working for people (and docs/scripts) using `mrclock`
   if [[ -n "$PGCTB_LEGACY_BIN_LINK" && "$PGCTB_LEGACY_BIN_LINK" != "$PGCTB_BIN_LINK" ]]; then
@@ -187,6 +192,130 @@ _pgctb_install_persistent() {
   fi
   _pgctb_retire_legacy_install "$src"
   echo "[PGClockTB] Installed to ${PGCTB_INSTALL_DIR} (command: pgclock)" >&2
+}
+
+_pgctb_atomic_install() {
+  # Build the new tree next to the old one, check it, then swap with renames.
+  # The previous tree is kept as <dir>.prev (update --rollback).
+  local src="$1" dir="$PGCTB_INSTALL_DIR" new prev f
+  new="${dir}.new"
+  prev="${dir}.prev"
+  rm -rf "${new:?}"
+  mkdir -p "$new" || return 1
+  cp -a "${src}/lib" "${src}/modules" "${src}/data" "$new/" || { rm -rf "${new:?}"; return 1; }
+  cp -a "${src}/install.sh" "$new/install.sh" || { rm -rf "${new:?}"; return 1; }
+  for f in VERSION LICENSE README.md CHANGELOG.md; do
+    [[ -f "${src}/${f}" ]] && cp -a "${src}/${f}" "${new}/${f}"
+  done
+  chmod 755 "${new}/install.sh"
+  if ! _pgctb_have_tree "$new" || ! bash -n "${new}/install.sh" 2>/dev/null; then
+    echo "[PGClockTB] ERROR: new tree failed checks — keeping the installed one" >&2
+    rm -rf "${new:?}"
+    return 1
+  fi
+  if [[ -d "$dir" && ! -L "$dir" ]]; then
+    rm -rf "${prev:?}"
+    mv "$dir" "$prev" || { rm -rf "${new:?}"; return 1; }
+  fi
+  if ! mv "$new" "$dir"; then
+    [[ -d "$prev" ]] && mv "$prev" "$dir"
+    return 1
+  fi
+  return 0
+}
+
+_pgctb_version_gt() {
+  # _pgctb_version_gt A B → 0 when version A is newer than B
+  [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]
+}
+
+_pgctb_tree_syntax_ok() {
+  local f
+  for f in "$1"/install.sh "$1"/lib/*.sh "$1"/modules/*.sh; do
+    bash -n "$f" 2>/dev/null || { echo "[PGClockTB] ERROR: syntax error in ${f#"$1"/}" >&2; return 1; }
+  done
+}
+
+pgctb_update() {
+  # pgctb_update [check|apply|rollback]
+  local mode="${1:-apply}" latest ver extracted newver dir="$PGCTB_INSTALL_DIR"
+  if [[ "$mode" == rollback ]]; then
+    if [[ ! -d "${dir}.prev" ]]; then
+      ui_error "No previous version kept at ${dir}.prev"
+      return 1
+    fi
+    rm -rf "${dir}.failed"
+    mv "$dir" "${dir}.failed" && mv "${dir}.prev" "$dir" && rm -rf "${dir}.failed" || {
+      ui_error "Rollback failed — check ${dir}*"; return 1; }
+    ui_success "Rolled back to $(tr -d '[:space:]' <"${dir}/VERSION" 2>/dev/null || echo 'previous version')"
+    return 0
+  fi
+
+  if ! latest="$(_pgctb_resolve_ref latest)"; then
+    ui_error "Could not resolve the latest release (network?)"
+    return 1
+  fi
+  ver="${latest#v}"
+  ui_kv "Installed" "$PGCTB_VERSION"
+  ui_kv "Latest" "$ver"
+  if ! _pgctb_version_gt "$ver" "$PGCTB_VERSION"; then
+    ui_success "PGClockTB is up to date"
+    return 0
+  fi
+  if [[ "$mode" == check ]]; then
+    ui_info "Update available: ${PGCTB_VERSION} → ${ver}  (sudo pgclock update)"
+    return 0
+  fi
+  if [[ "${PGCTB_ASSUME_YES:-0}" != 1 ]]; then
+    if ! have_tty; then
+      ui_error "No TTY to confirm — run: sudo pgclock update --yes"
+      return 1
+    fi
+    ui_confirm "Update PGClockTB ${PGCTB_VERSION} → ${ver}?" "Y" || { ui_warn "Cancelled."; return 0; }
+  fi
+
+  # Download + checksum (+ pinned signature) verification happens in fetch
+  if ! extracted="$(PGCTB_REF="$latest" _pgctb_fetch_tree)" || [[ -z "$extracted" ]]; then
+    ui_error "Download or verification failed — nothing was changed"
+    return 1
+  fi
+  newver="$(tr -d '[:space:]' <"${extracted}/VERSION" 2>/dev/null || true)"
+  if [[ "$newver" != "$ver" ]]; then
+    ui_error "Downloaded tree reports version '${newver}', expected ${ver} — refusing"
+    _pgctb_cleanup_fetch "$extracted"
+    return 1
+  fi
+  if ! _pgctb_tree_syntax_ok "$extracted"; then
+    _pgctb_cleanup_fetch "$extracted"
+    return 1
+  fi
+  if ! _pgctb_atomic_install "$extracted"; then
+    ui_error "Install failed — previous version kept"
+    _pgctb_cleanup_fetch "$extracted"
+    return 1
+  fi
+  _pgctb_cleanup_fetch "$extracted"
+  # Smoke test the new tree; roll back automatically if it cannot even start
+  if ! bash "${dir}/install.sh" --help >/dev/null 2>&1; then
+    ui_error "New version failed its smoke test — rolling back"
+    pgctb_update rollback
+    return 1
+  fi
+  _pgctb_write_launcher "$PGCTB_BIN_LINK"
+  ui_success "Updated to ${ver} (previous kept: sudo pgclock update rollback)"
+  return 0
+}
+
+_pgctb_cleanup_fetch() {
+  # Remove the temporary download dir that holds an extracted tree
+  local d="$1"
+  while [[ -n "$d" && "$d" != / ]]; do
+    if [[ "$(basename "$d")" == pgclocktb-fetch.* ]]; then
+      rm -rf "${d:?}"
+      return 0
+    fi
+    d="$(dirname "$d")"
+  done
 }
 
 _pgctb_write_launcher() {
@@ -404,6 +533,10 @@ Commands:
   (none)               Interactive menu
   status               Status report + verify, then exit
   doctor [--share]     Health check (PASS/WARN/FAIL); --share masks IPs/domains
+  update [--check|rollback]
+                       Self-update from the latest signed release (atomic,
+                       previous version kept for rollback)
+  --version            Print the version
   alerts check|test|status
                        Telegram alerts (check runs from the systemd timer)
   portcheck <host> "<ports>"
@@ -521,6 +654,18 @@ parse_args() {
       PGCTB_MODE=doctor; shift
       [[ "${1-}" == "--share" ]] && { PGCTB_CMD_ARG=--share; shift; }
       ;;
+    update)
+      shift
+      case "${1-}" in
+        --check|check) PGCTB_MODE=update; PGCTB_CMD_ARG=check; shift ;;
+        rollback) PGCTB_MODE=update; PGCTB_CMD_ARG=rollback; shift ;;
+        *) PGCTB_MODE=update; PGCTB_CMD_ARG=apply ;;
+      esac
+      ;;
+    --version|version)
+      printf '%s\n' "${PGCTB_VERSION:-unknown}"
+      exit 0
+      ;;
     alerts)
       case "${2-}" in
         check|test|status) PGCTB_MODE=alerts; PGCTB_CMD_ARG="$2"; shift 2 ;;
@@ -613,6 +758,7 @@ parse_args() {
 _pgctb_mode_mutates() {
   case "$PGCTB_MODE" in
     status|verify|doctor|portcheck) return 1 ;;
+    update) [[ "$PGCTB_CMD_ARG" == check ]] && return 1 ;;
     ssl|proxy) [[ "$PGCTB_CMD_ARG" == status ]] && return 1 ;;
     alerts) [[ "$PGCTB_CMD_ARG" == check || "$PGCTB_CMD_ARG" == status || "$PGCTB_CMD_ARG" == test ]] && return 1 ;;
   esac
@@ -624,6 +770,7 @@ main() {
   for __arg in "$@"; do
     case "$__arg" in
       --help|-h) usage; exit 0 ;;
+      --version) printf '%s\n' "${PGCTB_VERSION:-unknown}"; exit 0 ;;
     esac
   done
 
@@ -722,6 +869,9 @@ main() {
       ;;
     doctor)
       module_doctor "$PGCTB_CMD_ARG" || exit 1
+      ;;
+    update)
+      pgctb_update "$PGCTB_CMD_ARG" || exit 1
       ;;
     alerts)
       case "$PGCTB_CMD_ARG" in

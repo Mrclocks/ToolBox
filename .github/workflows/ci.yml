@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t files < <(find lib modules -type f -name '*.sh' | sort)
-          files+=(install.sh scripts/gen-checksums.sh)
+          files+=(install.sh scripts/gen-checksums.sh scripts/pin-release-key.sh)
           shellcheck -x -S warning "${files[@]}"
 
   bats:
